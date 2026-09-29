@@ -20,8 +20,12 @@ class Task(ABC):
     metrics: List[Type[Metric]] = []
 
     @classmethod
-    def default_metrics(cls) -> List[str]:
-        """Return metric registry names for this task."""
+    def default_metrics(cls, tier: str = "basic") -> List[str]:
+        """Return metric registry names for this task.
+
+        ``tier`` selects the metric tier: "basic" (no deep models) or
+        "professional" (all metrics). Subclasses may override to honor it.
+        """
         return [m.name for m in cls.metrics]
 
     @classmethod

@@ -23,6 +23,7 @@ import musicbench.metrics  # noqa: F401
 import musicbench.datasets  # noqa: F401
 
 from musicbench.core.data import Sample, prediction_from_json
+from musicbench.core.ranking import rank
 from musicbench.core.registry import get_metric, get_task
 from musicbench.core.runner import _flatten
 from musicbench.core.reproducibility import collect_env, dumps_jsonable
@@ -73,11 +74,13 @@ def main() -> int:
     p.add_argument("--predictions", nargs="+", required=True)
     p.add_argument("--labels", nargs="+", help="Algorithm names, aligned with --predictions")
     p.add_argument("--output", required=True)
+    p.add_argument("--tier", default="basic", choices=["basic", "professional"],
+                   help="Metric tier: basic (no deep models) or professional (all)")
     args = p.parse_args()
 
     samples = load_manifest(args.manifest)
     task_cls = get_task(args.task)
-    metric_names = task_cls.default_metrics()
+    metric_names = task_cls.default_metrics(args.tier)
 
     if args.labels and len(args.labels) != len(args.predictions):
         raise SystemExit("--labels must match --predictions in length")
@@ -96,13 +99,19 @@ def main() -> int:
     for label, scores in all_scores.items():
         flat[label] = {k: v for k, v in _flatten(scores).items() if isinstance(v, (int, float))}
 
+    ranking = rank(all_scores)
+
     with open(os.path.join(args.output, "scores.json"), "w") as f:
-        f.write(dumps_jsonable({"task": args.task, "algorithms": all_scores}))
+        f.write(dumps_jsonable({"task": args.task, "tier": args.tier,
+                                "algorithms": all_scores, "ranking": ranking}))
 
     with open(os.path.join(args.output, "env.json"), "w") as f:
         f.write(dumps_jsonable(collect_env(None)))
 
     print(json.dumps(all_scores, indent=2, ensure_ascii=False))
+    print("\n# Ranking (weighted mix)")
+    for i, r in enumerate(ranking, 1):
+        print(f"  {i}. {r['algorithm']}: {r['score']:.4f}  (used: {len(r['used_metrics'])}, skipped: {len(r['skipped_metrics'])})")
     return 0
 
 

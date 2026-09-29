@@ -1,3 +1,3 @@
 """Built-in datasets (registered on import)."""
 
-from . import synthetic  # noqa: F401  (import side-effect registers synthetic)
+from . import feature_json, synthetic  # noqa: F401

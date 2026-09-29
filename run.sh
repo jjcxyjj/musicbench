@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# musicbench orchestrator: package dataset -> run algorithms (each in its own
-# conda env) -> score -> plot + log.
+# musicbench orchestrator: task select -> tier select -> env select ->
+# package dataset -> run algorithms (each in its own conda env) ->
+# score (weighted ranking) -> plot + log.
 #
 # Usage:
-#   ./run.sh                 # interactive task selection
-#   ./run.sh beat_tracking   # non-interactive
-#   ./run.sh tagging
+#   ./run.sh                       # fully interactive
+#   ./run.sh text2music            # task by name (still asks tier + env)
 #
 # Environment variables:
 #   BENCH_ENV    conda env for the harness itself (default: musicbench)
@@ -22,36 +22,75 @@ TASK="${1:-}"
 say()  { printf '\033[1;32m[run]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31m[error]\033[0m %s\n' "$*" >&2; exit 1; }
+prompt_choice() { # $1=prompt  $2=default  -> echoes chosen label
+  local prompt="$1" default="$2" ans
+  printf "%s [%s]: " "$prompt" "$default" >&2
+  read -r ans
+  echo "${ans:-$default}"
+}
 
-# ------------------------------------------------------------------ select task
+# ------------------------------------------------------------------ 1. select task
 if [[ -z "$TASK" ]]; then
   echo "Select a task:"
-  echo "  1) beat_tracking"
-  echo "  2) tagging"
+  echo "  1) text2music     (music generation — objective + deep metrics)"
+  echo "  2) beat_tracking"
+  echo "  3) tagging"
   printf "Choice [1]: "
   read -r choice
   case "${choice:-1}" in
-    1|beat_tracking) TASK=beat_tracking ;;
-    2|tagging)       TASK=tagging ;;
+    1|text2music)    TASK=text2music ;;
+    2|beat_tracking) TASK=beat_tracking ;;
+    3|tagging)       TASK=tagging ;;
     *) die "invalid choice: $choice" ;;
   esac
 fi
-[[ "$TASK" == "beat_tracking" || "$TASK" == "tagging" ]] || die "unknown task: $TASK"
+case "$TASK" in
+  text2music|beat_tracking|tagging) ;;
+  *) die "unknown task: $TASK" ;;
+esac
 
-# Discover algorithms that support this task.
-ALGOS=()
-for d in "$HERE"/algorithms/*/; do
-  cfg="$d/config.yaml"
-  [[ -f "$cfg" ]] || continue
-  # crude yaml parse: look for `task:` line
-  algo_task=$(grep -E '^\s*task:' "$cfg" | head -1 | awk '{print $2}')
-  if [[ "$algo_task" == "$TASK" ]]; then
-    ALGOS+=("$(basename "$d")")
-  fi
+# ------------------------------------------------------------------ 2. select metric tier
+TIER=""
+if [[ "$TASK" == "text2music" ]]; then
+  echo "Select metric tier:"
+  echo "  1) basic        (L0 objective features only, no deep models)"
+  echo "  2) professional (L0 + L1: FAD / KL / CLAP — needs deep models)"
+  printf "Choice [1]: "
+  read -r tier_choice
+  case "${tier_choice:-1}" in
+    1|basic)        TIER=basic ;;
+    2|professional)  TIER=professional ;;
+    *) die "invalid tier: $tier_choice" ;;
+  esac
+else
+  TIER=basic
+fi
+say "task=$TASK  tier=$TIER"
+
+# ------------------------------------------------------------------ 3. select conda envs (from machine's actual envs)
+# List envs once; strip conda's leading comment lines and base marker.
+ENV_LIST=$("$CONDA" env list 2>/dev/null | grep -vE '^\s*#|^$' | awk '{print $1}' || true)
+if [[ -z "$ENV_LIST" ]]; then
+  warn "could not list conda envs; falling back to '$BENCH_ENV'"
+  ENV_LIST="$BENCH_ENV"
+fi
+# bash 3.2 (macOS) has no `readarray`; use a portable while-read.
+ENVS=()
+while IFS= read -r line; do
+  [[ -n "$line" ]] && ENVS+=("$line")
+done <<< "$ENV_LIST"
+
+echo "Available conda environments:"
+for i in "${!ENVS[@]}"; do
+  printf "  %d) %s\n" "$((i+1))" "${ENVS[$i]}"
 done
-[[ ${#ALGOS[@]} -gt 0 ]] || die "no algorithms support task $TASK"
 
-say "task=$TASK  algorithms=[${ALGOS[*]}]"
+# Harness env (benchmark itself) — pick or use BENCH_ENV.
+HARNESS_ENV=$(prompt_choice "Harness (scoring) env" "$BENCH_ENV")
+# Algorithm env — pick one for all algorithms (they share the inference env).
+ALGO_ENV=$(prompt_choice "Algorithm inference env" "${ENVS[0]}")
+
+say "harness env=$HARNESS_ENV  algorithm env=$ALGO_ENV"
 
 # ------------------------------------------------------------------ dirs
 OUT="runs/${TASK}_$(date +%Y%m%d_%H%M%S)"
@@ -60,42 +99,66 @@ PRED_DIR="$OUT/predictions"
 RESULT_DIR="$OUT/results"
 mkdir -p "$DATASET_DIR" "$PRED_DIR" "$RESULT_DIR"
 
-# ------------------------------------------------------------------ 1. package dataset
-say "packaging dataset -> $DATASET_DIR"
-PY="$CONDA run -n $BENCH_ENV python"
-$PY "$HERE/scripts/package_dataset.py" \
-  --dataset synthetic --split test \
-  --output "$DATASET_DIR" || die "dataset packaging failed"
+PY="$CONDA run -n $HARNESS_ENV python"
 
-# ------------------------------------------------------------------ 2. run each algorithm in its env
+# ------------------------------------------------------------------ 4. package dataset
+say "packaging dataset -> $DATASET_DIR"
+if [[ "$TASK" == "text2music" ]]; then
+  # text2music uses the MusicLite feature JSON (random 10 by default).
+  echo "Feature JSON root [/data/MusicLite_data/feature]: "
+  read -r feat_root
+  feat_root="${feat_root:-/data/MusicLite_data/feature}"
+  echo "Number of samples [10]: "
+  read -r n_samples
+  n_samples="${n_samples:-10}"
+  $PY "$HERE/scripts/package_dataset.py" \
+    --dataset feature_json --split test \
+    --output "$DATASET_DIR" \
+    --root "$feat_root" --num-samples "$n_samples" || die "dataset packaging failed"
+else
+  $PY "$HERE/scripts/package_dataset.py" \
+    --dataset synthetic --split test \
+    --output "$DATASET_DIR" || die "dataset packaging failed"
+fi
+
+# ------------------------------------------------------------------ 5. run each algorithm in the chosen env
+# Discover algorithms for this task.
+ALGOS=()
+for d in "$HERE"/algorithms/*/; do
+  cfg="$d/config.yaml"
+  [[ -f "$cfg" ]] || continue
+  algo_task=$(grep -E '^\s*task:' "$cfg" | head -1 | awk '{print $2}')
+  if [[ "$algo_task" == "$TASK" ]]; then
+    ALGOS+=("$(basename "$d")")
+  fi
+done
+[[ ${#ALGOS[@]} -gt 0 ]] || die "no algorithms support task $TASK (add one under algorithms/)"
+say "algorithms=[${ALGOS[*]}]"
+
 declare -a LABELS=()
 declare -a PRED_FILES=()
 for algo in "${ALGOS[@]}"; do
   cfg="$HERE/algorithms/$algo/config.yaml"
-  env_name=$(grep -E '^\s*env:' "$cfg" | head -1 | awk '{print $2}')
   script=$(grep -E '^\s*infer_script:' "$cfg" | head -1 | awk '{print $2}')
-  env_name="${env_name:-$BENCH_ENV}"
   script="${script:-infer.py}"
-
   pred="$PRED_DIR/$algo.jsonl"
-  say "running $algo (env=$env_name) -> $pred"
-  "$CONDA" run -n "$env_name" python "$HERE/algorithms/$algo/$script" \
+  say "running $algo (env=$ALGO_ENV) -> $pred"
+  "$CONDA" run -n "$ALGO_ENV" python "$HERE/algorithms/$algo/$script" \
     --manifest "$DATASET_DIR/manifest.json" --output "$pred" || die "$algo inference failed"
-
   LABELS+=("$algo")
   PRED_FILES+=("$pred")
 done
 
-# ------------------------------------------------------------------ 3. score
-say "scoring predictions"
+# ------------------------------------------------------------------ 6. score (weighted ranking)
+say "scoring (tier=$TIER)"
 $PY "$HERE/scripts/score.py" \
   --manifest "$DATASET_DIR/manifest.json" \
-  --task "$TASK" \
+  --task "$TASK" --tier "$TIER" \
   --predictions "${PRED_FILES[@]}" \
   --labels "${LABELS[@]}" \
   --output "$RESULT_DIR" || die "scoring failed"
 
-# ------------------------------------------------------------------ 4. plot + log
+# ------------------------------------------------------------------ 7. plot + log
 say "rendering comparison chart"
 $PY "$HERE/scripts/plot.py" \
   --scores "$RESULT_DIR/scores.json" \

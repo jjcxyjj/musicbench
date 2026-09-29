@@ -1,0 +1,4 @@
+name: t2m_passthrough
+env: musicbench
+task: text2music
+infer_script: infer.py

@@ -2,5 +2,6 @@
 
 from .beat_tracking import BeatTrackingTask
 from .tagging import TaggingTask
+from .text2music import Text2MusicTask
 
-__all__ = ["BeatTrackingTask", "TaggingTask"]
+__all__ = ["BeatTrackingTask", "TaggingTask", "Text2MusicTask"]

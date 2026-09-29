@@ -34,7 +34,18 @@ def package(dataset_name: str, split: str, output_dir: str, **dataset_kwargs: An
 
     manifest: List[Dict[str, Any]] = []
     for s in samples:
-        # Copy audio into the package so the algorithm env sees a stable path.
+        if not s.audio_path or not os.path.isfile(s.audio_path):
+            # Keep samples whose reference audio is missing so the manifest
+            # still lists them; algorithms/metrics may skip them.
+            manifest.append(
+                {
+                    "id": s.id,
+                    "audio_path": s.audio_path or "",
+                    "metadata": _jsonable(s.metadata),
+                    "ground_truth": _jsonable(s.ground_truth),
+                }
+            )
+            continue
         ext = os.path.splitext(s.audio_path)[1] or ".wav"
         dst = os.path.join(audio_dir, f"{s.id}{ext}")
         shutil.copy2(s.audio_path, dst)
@@ -57,16 +68,26 @@ def main() -> int:
     p.add_argument("--dataset", default="synthetic")
     p.add_argument("--split", default="test")
     p.add_argument("--output", required=True)
+    # synthetic dataset params
     p.add_argument("--num-samples", type=int, default=8)
     p.add_argument("--duration", type=float, default=6.0)
     p.add_argument("--sr", type=int, default=22050)
     p.add_argument("--tempo", type=float, default=120.0)
+    # feature_json dataset params
+    p.add_argument("--root", default="/data/MusicLite_data/feature")
+    p.add_argument("--json-name", default="5_with_latent.json")
     args = p.parse_args()
 
-    manifest = package(
-        args.dataset, args.split, args.output,
-        num_samples=args.num_samples, duration=args.duration, sr=args.sr, tempo=args.tempo,
-    )
+    if args.dataset == "feature_json":
+        manifest = package(
+            args.dataset, args.split, args.output,
+            root=args.root, num_samples=args.num_samples, json_name=args.json_name,
+        )
+    else:
+        manifest = package(
+            args.dataset, args.split, args.output,
+            num_samples=args.num_samples, duration=args.duration, sr=args.sr, tempo=args.tempo,
+        )
     print(f"[package] wrote {len(manifest)} samples to {args.output}")
     return 0
 

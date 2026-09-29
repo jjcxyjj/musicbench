@@ -25,6 +25,7 @@ def main() -> int:
 
     algorithms: Dict[str, Dict[str, Any]] = data.get("algorithms", {})
     task = data.get("task", "unknown")
+    ranking = data.get("ranking", [])
 
     # Flatten each algorithm's metrics into scalar key -> value.
     rows: Dict[str, Dict[str, float]] = {}
@@ -36,8 +37,13 @@ def main() -> int:
             if k not in metric_keys:
                 metric_keys.append(k)
 
-    # Write a human-readable log.
+    # Write a human-readable log (ranking first).
     log_lines = [f"# musicbench report — task: {task}", ""]
+    if ranking:
+        log_lines.append("## Ranking (weighted mix)")
+        for i, r in enumerate(ranking, 1):
+            log_lines.append(f"  {i}. {r['algorithm']}: {r['score']:.4f}")
+        log_lines.append("")
     for label in rows:
         log_lines.append(f"## {label}")
         for k in metric_keys:
@@ -47,9 +53,9 @@ def main() -> int:
     with open(os.path.join(args.output, "report.log"), "w") as f:
         f.write("\n".join(log_lines))
 
-    # Render PNG bar chart.
+    # Render PNG bar chart (raw metrics + ranking side panel).
     try:
-        _plot(args.output, rows, metric_keys, task)
+        _plot(args.output, rows, metric_keys, task, ranking)
     except Exception as exc:  # pragma: no cover - matplotlib may be absent
         print(f"[plot] PNG render skipped ({exc})")
         return 0
@@ -58,7 +64,8 @@ def main() -> int:
     return 0
 
 
-def _plot(output_dir: str, rows: Dict[str, Dict[str, float]], metric_keys: List[str], task: str) -> None:
+def _plot(output_dir: str, rows: Dict[str, Dict[str, float]], metric_keys: List[str],
+          task: str, ranking: List[Dict[str, Any]]) -> None:
     import matplotlib
 
     matplotlib.use("Agg")
@@ -68,7 +75,12 @@ def _plot(output_dir: str, rows: Dict[str, Dict[str, float]], metric_keys: List[
     x = list(range(len(metric_keys)))
     width = 0.8 / max(1, len(labels))
 
-    fig, ax = plt.subplots(figsize=(max(6, len(metric_keys) * 1.8), 4.5))
+    has_ranking = bool(ranking)
+    fig, (ax, ax_rank) = plt.subplots(
+        1, 2, figsize=(max(8, len(metric_keys) * 1.8), 4.8),
+        gridspec_kw={"width_ratios": [3, 1]} if has_ranking else None,
+    ) if has_ranking else plt.subplots(1, 1, figsize=(max(8, len(metric_keys) * 1.8), 4.8))
+
     for i, label in enumerate(labels):
         vals = [rows[label].get(k, 0.0) for k in metric_keys]
         ax.bar([xi + (i - len(labels) / 2 + 0.5) * width for xi in x], vals, width, label=label)
@@ -78,6 +90,15 @@ def _plot(output_dir: str, rows: Dict[str, Dict[str, float]], metric_keys: List[
     ax.set_ylabel("score")
     ax.set_title(f"musicbench — {task}")
     ax.legend()
+
+    if has_ranking:
+        names = [r["algorithm"] for r in reversed(ranking)]
+        scores = [r["score"] for r in reversed(ranking)]
+        ax_rank.barh(names, scores)
+        ax_rank.set_xlim(0, 1)
+        ax_rank.set_title("ranking (weighted)")
+        ax_rank.set_xlabel("score")
+
     fig.tight_layout()
     fig.savefig(os.path.join(output_dir, "comparison.png"), dpi=150)
     plt.close(fig)
