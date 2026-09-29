@@ -1,0 +1,8 @@
+numpy
+scipy
+pyyaml
+scikit-learn
+mir_eval
+
+[dev]
+pytest

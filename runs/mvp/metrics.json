@@ -1,0 +1,12 @@
+{
+  "beat_fmeasure": {
+    "cemgil": 0.9309717212635236,
+    "f_measure": 1.0,
+    "n_evaluated": 8,
+    "p_score": 1.0
+  },
+  "tempo_mae": {
+    "n_evaluated": 8,
+    "tempo_mae": 0.18531976744185386
+  }
+}

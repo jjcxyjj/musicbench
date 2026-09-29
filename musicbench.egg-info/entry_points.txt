@@ -1,0 +1,2 @@
+[console_scripts]
+musicbench = musicbench.cli:main

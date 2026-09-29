@@ -1,0 +1,15 @@
+seed: 42
+task: tagging
+dataset:
+  name: synthetic
+  split: test
+  num_samples: 8
+  sr: 22050
+  duration: 6.0
+  tempo: 120.0
+adapter:
+  name: dsp_tag
+metrics:
+- tag_map
+- tag_macro_f1
+- tag_macro_auc

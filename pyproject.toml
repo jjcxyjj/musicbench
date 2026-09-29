@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "musicbench"
+version = "0.1.0"
+description = "A music algorithm evaluation harness (beat tracking, tagging, and extensible to chord/QA/text-to-music)."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "numpy",
+    "scipy",
+    "pyyaml",
+    "scikit-learn",
+    "mir_eval",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+musicbench = "musicbench.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["musicbench*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

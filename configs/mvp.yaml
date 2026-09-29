@@ -1,0 +1,19 @@
+# MusicBench MVP config — beat tracking on synthetic data.
+seed: 42
+
+task: beat_tracking
+
+dataset:
+  name: synthetic
+  split: test
+  num_samples: 8
+  sr: 22050
+  duration: 6.0
+  tempo: 120.0
+
+adapter:
+  name: dsp_beat
+
+metrics:
+  - beat_fmeasure
+  - tempo_mae

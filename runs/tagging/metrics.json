@@ -1,0 +1,11 @@
+{
+  "tag_macro_auc": {
+    "macro_auc": 1.0
+  },
+  "tag_macro_f1": {
+    "macro_f1": 1.0
+  },
+  "tag_map": {
+    "map": 1.0
+  }
+}
