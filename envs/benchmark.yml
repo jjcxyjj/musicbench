@@ -1,0 +1,22 @@
+# MusicBench benchmark environment (minimal, torch-free).
+# The harness only scores predictions and renders reports; it never runs
+# algorithm models, so it must NOT depend on torch/CUDA — that keeps it
+# conflict-free against every algorithm environment.
+#
+#   conda env create -f envs/benchmark.yml
+#   conda activate musicbench
+#
+name: musicbench
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - numpy
+  - scipy
+  - pyyaml
+  - scikit-learn
+  - matplotlib
+  - pip
+  - pip:
+      - mir_eval

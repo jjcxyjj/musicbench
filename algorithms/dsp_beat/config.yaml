@@ -1,0 +1,7 @@
+# Each algorithm lives in its own directory and declares its conda env here.
+# run.sh reads this file and activates the env with `conda run -n <env>`.
+
+name: dsp_beat
+env: musicbench              # conda env to run inference in
+task: beat_tracking
+infer_script: infer.py       # relative to this directory

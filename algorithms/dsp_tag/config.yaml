@@ -1,0 +1,4 @@
+name: dsp_tag
+env: musicbench
+task: tagging
+infer_script: infer.py

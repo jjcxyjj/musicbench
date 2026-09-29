@@ -15,18 +15,85 @@ musicbench/
 ├── metrics/       mir_eval.beat F-measure, tempo MAE, mAP/F1/AUC (sklearn)
 ├── datasets/      synthetic (deterministic, no download)
 ├── adapters/      dsp_beat, dsp_tag (dependency-light demo adapters)
+├── scripts/       package_dataset.py, score.py, plot.py (orchestration)
+├── algorithms/    dsp_beat/, dsp_tag/ (each with its own conda env + infer.py)
+envs/              benchmark.yml (harness env), algorithm.template.yml
 configs/           mvp.yaml (beat), tagging.yaml
 examples/          beat_model.py, tag_model.py (adapter contract examples)
 tests/             pytest suite (mir_eval alignment + end-to-end)
+run.sh             one-command orchestrator (task select -> infer -> score -> png/log)
 ```
 
-## Install
+## Two-layer environment design
+
+Different algorithms need conflicting dependencies, so the harness and each
+algorithm run in **separate conda environments**, bridged only by JSON files:
+
+```
+benchmark env (minimal, no torch)  <-- scores, plots, orchestrates
+        ▲ reads predictions.jsonl
+   ┌────┴───────┬───────────┬─────────┐
+   ▼            ▼           ▼         ▼
+alg A env     alg B env  alg C env  ...
+  └── each writes predictions.jsonl (pure JSON, no musicbench import)
+```
+
+* `envs/benchmark.yml` — the harness env (numpy/scipy/sklearn/mir_eval/matplotlib).
+* `envs/algorithm.template.yml` — copy per algorithm and add its real deps.
+* `algorithms/<name>/config.yaml` declares the algorithm's `env` and `task`.
+
+## Install (harness env)
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -e .            # installs deps + `musicbench` CLI
-pip install -e ".[dev]"     # + pytest
+conda env create -f envs/benchmark.yml
+conda activate musicbench
+pip install -e .            # installs the `musicbench` CLI
 ```
+
+## One-command orchestration
+
+```bash
+./run.sh                 # interactive: pick task, runs everything
+./run.sh beat_tracking   # non-interactive
+./run.sh tagging
+```
+
+This packages the dataset, runs each matching algorithm in its own conda env,
+scores them, and writes a comparison PNG + log:
+
+```
+runs/<task>_<timestamp>/
+├── dataset/manifest.json          # inputs + ground truth
+├── predictions/<algo>.jsonl       # one file per algorithm
+└── results/
+    ├── scores.json                # per-algorithm metrics
+    ├── report.log                 # human-readable ranking
+    └── comparison.png             # bar chart
+```
+
+## Manual step-by-step
+
+```bash
+# 1. package dataset
+python scripts/package_dataset.py --dataset synthetic --output dataset/
+
+# 2. run an algorithm (its own env)
+conda run -n <algo_env> python algorithms/dsp_beat/infer.py \
+    --manifest dataset/manifest.json --output preds/dsp_beat.jsonl
+
+# 3. score
+python scripts/score.py --manifest dataset/manifest.json --task beat_tracking \
+    --predictions preds/dsp_beat.jsonl --labels dsp_beat --output results/
+
+# 4. plot + log
+python scripts/plot.py --scores results/scores.json --output results/
+```
+
+## Adding a new algorithm
+
+1. Copy `envs/algorithm.template.yml` to `envs/<algo>.yml`, fill in deps, `conda env create -f envs/<algo>.yml`.
+2. Create `algorithms/<algo>/` with `config.yaml` (`name`, `env`, `task`) and `infer.py` (reads `manifest.json`, writes `predictions.jsonl`). `infer.py` must NOT import musicbench.
+3. `./run.sh <task>` will auto-discover it.
 
 ## Run
 

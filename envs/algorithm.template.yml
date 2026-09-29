@@ -1,0 +1,20 @@
+# TEMPLATE for one algorithm environment. Copy to e.g. envs/ace_step.yml and
+# add the exact dependencies that algorithm needs. Each algorithm declares its
+# env name in algorithms/<name>/config.yaml, and run.sh activates it via
+# `conda run -n <env>`.
+#
+#   conda env create -f envs/algorithm.template.yml
+#
+name: algorithm_template
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - numpy
+  - scipy
+  # Add your algorithm's real deps here, e.g.:
+  # - pytorch
+  # - torchaudio
+  # - pip:
+  #     - your-model-package
