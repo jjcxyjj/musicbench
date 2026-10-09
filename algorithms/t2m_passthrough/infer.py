@@ -32,7 +32,7 @@ def main() -> int:
         manifest = json.load(f)
 
     base = os.path.dirname(args.manifest)
-    out_dir = args.out_audio_dir or os.path.join(os.path.dirname(args.output), "gen_audio")
+    out_dir = args.out_audio_dir or os.path.join(os.path.dirname(args.output), "gen_audio_passthrough")
     os.makedirs(out_dir, exist_ok=True)
 
     lines: List[str] = []

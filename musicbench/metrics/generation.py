@@ -64,6 +64,39 @@ def _embed_clap(clap: Dict[str, Any], audio_paths: List[str]) -> np.ndarray:
     return np.stack(feats)
 
 
+def _load_vggish() -> Optional[Any]:
+    """Load a VGGish embedding model via ``torchvggish``, if available.
+
+    VGGish (128-d Audioset embeddings) is the canonical embedding for
+    Fréchet Audio Distance. ``torchvggish`` downloads its weights from
+    GitHub releases on first use; set the proxy or pre-download if needed.
+    """
+    try:
+        import torchvggish  # type: ignore
+
+        model = torchvggish.vggish()
+        model.eval()
+        return model
+    except Exception:
+        return None
+
+
+def _embed_vggish(model: Any, audio_paths: List[str]) -> np.ndarray:
+    """Embed each audio file with VGGish and mean-pool its frame embeddings."""
+    from torchvggish import vggish_input  # type: ignore
+
+    import librosa
+
+    feats = []
+    for p in audio_paths:
+        audio, sr = librosa.load(p, sr=None, mono=True)
+        examples = vggish_input.waveform_to_examples(audio, sr)
+        emb = model(examples).detach().cpu().numpy()
+        emb = np.atleast_2d(emb)
+        feats.append(emb.mean(axis=0))
+    return np.stack(feats)
+
+
 def _fad(emb_ref: np.ndarray, emb_gen: np.ndarray) -> float:
     mu_r = emb_ref.mean(axis=0)
     mu_g = emb_gen.mean(axis=0)
@@ -87,10 +120,11 @@ def _sqrtm(a: np.ndarray) -> np.ndarray:
 
 @METRICS.register("fad")
 class FADMetric(Metric):
-    """Fréchet Audio Distance between generated and reference embeddings.
+    """Fréchet Audio Distance between generated and reference VGGish embeddings.
 
-    Lower is better. Requires a CLAP model (``transformers`` + ``librosa``).
-    Set ``MUSICBENCH_CLAP_MODEL`` to override the checkpoint.
+    Lower is better. Uses standard VGGish embeddings (``torchvggish``), matching
+    the original FAD definition, instead of CLAP embeddings. Degrades gracefully
+    (``{"available": false}``) when torch/torchvggish is unavailable.
     """
 
     name = "fad"
@@ -101,14 +135,14 @@ class FADMetric(Metric):
         if not gen or len(ref) < 2:
             return {"available": False, "fad": float("nan"), "reason": "insufficient audio"}
 
-        clap = _load_clap()
-        if clap is None:
+        model = _load_vggish()
+        if model is None:
             return {"available": False, "fad": float("nan"),
-                    "reason": "CLAP model unavailable (install transformers+librosa)"}
+                    "reason": "VGGish unavailable (pip install torchvggish)"}
 
         try:
-            emb_ref = _embed_clap(clap, ref)
-            emb_gen = _embed_clap(clap, gen)
+            emb_ref = _embed_vggish(model, ref)
+            emb_gen = _embed_vggish(model, gen)
             return {"available": True, "fad": _fad(emb_ref, emb_gen)}
         except Exception as exc:
             return {"available": False, "fad": float("nan"), "reason": str(exc)[:200]}

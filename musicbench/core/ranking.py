@@ -25,6 +25,12 @@ DEFAULT_WEIGHTS: Dict[str, Tuple[float, bool]] = {
     "fad.fad": (1.5, False),            # lower is better
     "kl_div.kl": (1.0, False),          # lower is better
     "clap_score.clap": (1.5, True),     # higher is better
+    # SongEval aesthetics (higher is better)
+    "songeval.coherence": (1.0, True),
+    "songeval.musicality": (1.0, True),
+    "songeval.memorability": (1.0, True),
+    "songeval.clarity": (1.0, True),
+    "songeval.naturalness": (1.0, True),
     # beat tracking
     "beat_fmeasure.f_measure": (1.0, True),
     "beat_fmeasure.cemgil": (0.5, True),

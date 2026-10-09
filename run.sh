@@ -67,30 +67,11 @@ else
 fi
 say "task=$TASK  tier=$TIER"
 
-# ------------------------------------------------------------------ 3. select conda envs (from machine's actual envs)
-# List envs once; strip conda's leading comment lines and base marker.
-ENV_LIST=$("$CONDA" env list 2>/dev/null | grep -vE '^\s*#|^$' | awk '{print $1}' || true)
-if [[ -z "$ENV_LIST" ]]; then
-  warn "could not list conda envs; falling back to '$BENCH_ENV'"
-  ENV_LIST="$BENCH_ENV"
-fi
-# bash 3.2 (macOS) has no `readarray`; use a portable while-read.
-ENVS=()
-while IFS= read -r line; do
-  [[ -n "$line" ]] && ENVS+=("$line")
-done <<< "$ENV_LIST"
-
-echo "Available conda environments:"
-for i in "${!ENVS[@]}"; do
-  printf "  %d) %s\n" "$((i+1))" "${ENVS[$i]}"
-done
-
-# Harness env (benchmark itself) — pick or use BENCH_ENV.
-HARNESS_ENV=$(prompt_choice "Harness (scoring) env" "$BENCH_ENV")
-# Algorithm env — pick one for all algorithms (they share the inference env).
-ALGO_ENV=$(prompt_choice "Algorithm inference env" "${ENVS[0]}")
-
-say "harness env=$HARNESS_ENV  algorithm env=$ALGO_ENV"
+# ------------------------------------------------------------------ 3. harness env (scoring/plotting only)
+# Each algorithm declares its OWN env in algorithms/<name>/config.yaml; the
+# harness env is separate and only runs package/score/plot (no model weights).
+HARNESS_ENV="${BENCH_ENV}"
+say "harness env=$HARNESS_ENV (algorithms use their own env from config.yaml)"
 
 # ------------------------------------------------------------------ dirs
 OUT="runs/${TASK}_$(date +%Y%m%d_%H%M%S)"
@@ -121,7 +102,7 @@ else
     --output "$DATASET_DIR" || die "dataset packaging failed"
 fi
 
-# ------------------------------------------------------------------ 5. run each algorithm in the chosen env
+# ------------------------------------------------------------------ 5. run each algorithm in ITS OWN env (from config.yaml)
 # Discover algorithms for this task.
 ALGOS=()
 for d in "$HERE"/algorithms/*/; do
@@ -141,9 +122,13 @@ for algo in "${ALGOS[@]}"; do
   cfg="$HERE/algorithms/$algo/config.yaml"
   script=$(grep -E '^\s*infer_script:' "$cfg" | head -1 | awk '{print $2}')
   script="${script:-infer.py}"
+  # Each algorithm declares its own env; default to harness env if absent.
+  algo_env=$(grep -E '^\s*env:' "$cfg" | head -1 | awk '{print $2}')
+  algo_env="${algo_env:-$HARNESS_ENV}"
+
   pred="$PRED_DIR/$algo.jsonl"
-  say "running $algo (env=$ALGO_ENV) -> $pred"
-  "$CONDA" run -n "$ALGO_ENV" python "$HERE/algorithms/$algo/$script" \
+  say "running $algo (env=$algo_env) -> $pred"
+  "$CONDA" run -n "$algo_env" python "$HERE/algorithms/$algo/$script" \
     --manifest "$DATASET_DIR/manifest.json" --output "$pred" || die "$algo inference failed"
   LABELS+=("$algo")
   PRED_FILES+=("$pred")

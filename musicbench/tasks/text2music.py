@@ -19,5 +19,5 @@ class Text2MusicTask(Task):
     @classmethod
     def default_metrics(cls, tier: str = "basic"):
         if tier == "professional":
-            return ["audio_quality", "fad", "kl_div", "clap_score"]
+            return ["audio_quality", "fad", "kl_div", "clap_score", "songeval"]
         return ["audio_quality"]
