@@ -49,7 +49,8 @@ class AudioQualityMetric(Metric):
             for f in FEATURES:
                 errs[f].append(abs(float(gen[f]) - float(ref[f])))
 
-        out: Dict[str, Any] = {"n_evaluated": n}
+        out: Dict[str, Any] = {"n_evaluated": n, "available": n > 0,
+                               "coverage": n / len(samples) if samples else 0.0}
         for f in FEATURES:
             out[f"mae_{f}"] = float(np.mean(errs[f])) if errs[f] else float("nan")
         return out

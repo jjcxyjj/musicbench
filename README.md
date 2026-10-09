@@ -1,5 +1,10 @@
 # musicbench
 
+SongEval aesthetics scoring is available for text-to-music evaluations.
+See [setup, scoring and interpretation](docs/SONGEVAL.md). Professional tier
+includes this optional scorer; basic audio-feature similarity is not an
+aesthetic quality score.
+
 A **music algorithm evaluation harness**. v0.1 ships two tasks — **beat
 tracking** and **tagging** — with a registry, a YAML-driven runner, and a CLI
 (`run` / `evaluate` / `report`). The abstraction is designed to grow into

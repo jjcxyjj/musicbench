@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import math
 from typing import Any, Dict, List
 
 from musicbench.core.runner import _flatten
@@ -31,7 +32,10 @@ def main() -> int:
     rows: Dict[str, Dict[str, float]] = {}
     metric_keys: List[str] = []
     for label, scores in algorithms.items():
-        flat = {k: v for k, v in _flatten(scores).items() if isinstance(v, (int, float))}
+        from musicbench.core.ranking import DEFAULT_WEIGHTS
+        flat = {k: v for k, v in _flatten(scores).items()
+                if k in DEFAULT_WEIGHTS and isinstance(v, (int, float))
+                and not isinstance(v, bool) and math.isfinite(v)}
         rows[label] = flat
         for k in flat:
             if k not in metric_keys:
@@ -39,6 +43,11 @@ def main() -> int:
 
     # Write a human-readable log (ranking first).
     log_lines = [f"# musicbench report — task: {task}", ""]
+    log_lines.append(data.get("ranking_note", ""))
+    for label, groups in algorithms.items():
+        for name, values in groups.items():
+            if isinstance(values, dict) and (values.get("available") is False or values.get("coverage", 1.0) < 1.0):
+                log_lines.append(f"WARNING {label}/{name}: {values.get('reason', values.get('errors', 'incomplete coverage'))}")
     if ranking:
         log_lines.append("## Ranking (weighted mix)")
         for i, r in enumerate(ranking, 1):
@@ -76,13 +85,14 @@ def _plot(output_dir: str, rows: Dict[str, Dict[str, float]], metric_keys: List[
     width = 0.8 / max(1, len(labels))
 
     has_ranking = bool(ranking)
-    fig, (ax, ax_rank) = plt.subplots(
-        1, 2, figsize=(max(8, len(metric_keys) * 1.8), 4.8),
-        gridspec_kw={"width_ratios": [3, 1]} if has_ranking else None,
-    ) if has_ranking else plt.subplots(1, 1, figsize=(max(8, len(metric_keys) * 1.8), 4.8))
+    if has_ranking:
+        fig, (ax, ax_rank) = plt.subplots(1, 2, figsize=(max(8, len(metric_keys) * 1.8), 4.8),
+                                         gridspec_kw={"width_ratios": [3, 1]})
+    else:
+        fig, ax = plt.subplots(1, 1, figsize=(max(8, len(metric_keys) * 1.8), 4.8))
 
     for i, label in enumerate(labels):
-        vals = [rows[label].get(k, 0.0) for k in metric_keys]
+        vals = [rows[label].get(k, float("nan")) for k in metric_keys]
         ax.bar([xi + (i - len(labels) / 2 + 0.5) * width for xi in x], vals, width, label=label)
 
     ax.set_xticks(x)

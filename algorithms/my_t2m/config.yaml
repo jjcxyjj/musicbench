@@ -1,0 +1,4 @@
+name: my_t2m
+env: my_t2m_env            # ← 改成你模型自己的 conda 环境名
+task: text2music
+infer_script: infer.py

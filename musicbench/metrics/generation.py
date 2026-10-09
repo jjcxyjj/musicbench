@@ -12,6 +12,7 @@ mirror); see each function's docstring.
 from __future__ import annotations
 
 import os
+from functools import lru_cache
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -35,13 +36,15 @@ def _reference_paths(samples: List[Sample]) -> List[str]:
     return [s.audio_path for s in samples if os.path.isfile(s.audio_path)]
 
 
+@lru_cache(maxsize=1)
 def _load_clap() -> Optional[Any]:
     """Load a CLAP model (audio embedding) via transformers, if available."""
     try:
         from transformers import ClapModel, ClapProcessor  # type: ignore
 
         ckpt = os.environ.get("MUSICBENCH_CLAP_MODEL", "laion/clap-htsat-fused")
-        model = ClapModel.from_pretrained(ckpt)
+        model = ClapModel.from_pretrained(ckpt).eval()
+        model.requires_grad_(False)
         processor = ClapProcessor.from_pretrained(ckpt)
         return {"model": model, "processor": processor, "ckpt": ckpt}
     except Exception as exc:  # pragma: no cover - dependency optional
@@ -71,16 +74,15 @@ def _fad(emb_ref: np.ndarray, emb_gen: np.ndarray) -> float:
     cov_g = np.cov(emb_gen, rowvar=False)
     diff = mu_r - mu_g
     # Fréchet distance = ||mu_r-mu_g||^2 + Tr(C_r + C_g - 2*(C_r C_g)^{1/2})
-    covmean = _sqrtm(cov_r @ cov_g)
-    if np.iscomplexobj(covmean):
-        covmean = covmean.real
+    root_r = _sqrtm(cov_r)
+    covmean = _sqrtm(root_r @ cov_g @ root_r)
     tr = np.trace(cov_r + cov_g - 2 * covmean)
-    return float(diff @ diff + tr)
+    return max(0.0, float(diff @ diff + tr))
 
 
 def _sqrtm(a: np.ndarray) -> np.ndarray:
     """Matrix square root (real) via eigen-decomposition."""
-    w, v = np.linalg.eigh(a)
+    w, v = np.linalg.eigh((a + a.T) / 2)
     w = np.clip(w, 0, None)
     return (v * np.sqrt(w)) @ v.T
 
@@ -98,7 +100,7 @@ class FADMetric(Metric):
     def compute(self, predictions: List[Prediction], samples: List[Sample]) -> Dict[str, Any]:
         gen = _generated_paths(predictions)
         ref = _reference_paths(samples)
-        if not gen or len(ref) < 2:
+        if len(gen) < 2 or len(ref) < 2:
             return {"available": False, "fad": float("nan"), "reason": "insufficient audio"}
 
         clap = _load_clap()
@@ -137,9 +139,13 @@ class KLDivergenceMetric(Metric):
 
         try:
             at = AudioTagging(checkpoint_path=None, device="cpu")
-            p_ref = np.mean(at.inference(np.concatenate([_load(p) for p in ref]))[0], axis=0)
-            p_gen = np.mean(at.inference(np.concatenate([_load(p) for p in gen]))[0], axis=0)
+            p_ref = np.mean([at.inference(_load(p)[None, :])[0][0] for p in ref], axis=0)
+            p_gen = np.mean([at.inference(_load(p)[None, :])[0][0] for p in gen], axis=0)
             eps = 1e-9
+            p_ref = np.maximum(p_ref, eps)
+            p_gen = np.maximum(p_gen, eps)
+            p_ref = p_ref / p_ref.sum()
+            p_gen = p_gen / p_gen.sum()
             kl = float(np.sum(p_ref * np.log((p_ref + eps) / (p_gen + eps))))
             return {"available": True, "kl": kl}
         except Exception as exc:
@@ -190,7 +196,9 @@ class CLAPScoreMetric(Metric):
                 continue
         if not sims:
             return {"available": False, "clap": float("nan"), "reason": "no valid caption+audio pairs"}
-        return {"available": True, "clap": float(np.mean(sims))}
+        return {"available": True, "clap": float(np.mean(sims)),
+                "n_evaluated": len(sims),
+                "coverage": len(sims) / len(samples) if samples else 0.0}
 
 
 def _load(path: str) -> np.ndarray:

@@ -51,6 +51,8 @@ class FeatureJsonDataset(Dataset):
     ) -> None:
         self.root = root
         self.num_samples = int(num_samples)
+        if self.num_samples <= 0:
+            raise ValueError("num_samples must be positive")
         self.seed = int(seed)
         self.json_name = json_name
         self.audio_field = audio_field
@@ -69,18 +71,24 @@ class FeatureJsonDataset(Dataset):
     def _collect_records(self) -> List[Dict[str, Any]]:
         pattern = os.path.join(self.root, "*", self.json_name)
         files = sorted(glob.glob(pattern))
+        if not files:
+            raise FileNotFoundError(f"No feature JSON files matching {pattern}")
         records: List[Dict[str, Any]] = []
         for fp in files:
             try:
                 with open(fp) as f:
                     data = json.load(f)
-            except Exception:
-                continue
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ValueError(f"Cannot read feature JSON {fp}: {exc}") from exc
             # Support both a JSON array and a single object.
             if isinstance(data, list):
                 records.extend(data)
             elif isinstance(data, dict):
                 records.append(data)
+            else:
+                raise ValueError(f"Expected JSON array or object: {fp}")
+        if not records:
+            raise ValueError("Feature dataset contains no samples")
         return records
 
     def _to_sample(self, idx: int, rec: Dict[str, Any]) -> Sample:

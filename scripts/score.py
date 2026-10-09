@@ -55,11 +55,34 @@ def load_predictions(path: str) -> List:
         for line in f:
             line = line.strip()
             if line:
-                preds.append(prediction_from_json(json.loads(line)))
+                pred = prediction_from_json(json.loads(line))
+                if isinstance(pred.output, dict) and pred.output.get("audio_path"):
+                    audio = pred.output["audio_path"]
+                    if not os.path.isabs(audio):
+                        pred.output["audio_path"] = os.path.abspath(os.path.join(os.path.dirname(path), audio))
+                preds.append(pred)
     return preds
 
 
+def validate_predictions(task_name, predictions, samples):
+    expected = [s.id for s in samples]
+    actual = [p.id for p in predictions]
+    if not expected or len(set(expected)) != len(expected):
+        raise ValueError("Manifest is empty or contains duplicate IDs")
+    if len(set(actual)) != len(actual):
+        raise ValueError("Duplicate prediction IDs")
+    missing, extra = set(expected) - set(actual), set(actual) - set(expected)
+    if missing or extra:
+        raise ValueError(f"Prediction IDs mismatch: missing={sorted(missing)}, extra={sorted(extra)}")
+    if task_name == "text2music":
+        for pred in predictions:
+            path = pred.output.get("audio_path") if isinstance(pred.output, dict) else None
+            if not path or not os.path.isfile(path):
+                raise ValueError(f"Missing generated audio for {pred.id}: {path}")
+
+
 def score_one(task_name: str, metric_names: List[str], predictions: List, samples: List[Sample]) -> Dict[str, Any]:
+    validate_predictions(task_name, predictions, samples)
     out: Dict[str, Any] = {}
     for name in metric_names:
         m = get_metric(name)()
@@ -74,17 +97,21 @@ def main() -> int:
     p.add_argument("--predictions", nargs="+", required=True)
     p.add_argument("--labels", nargs="+", help="Algorithm names, aligned with --predictions")
     p.add_argument("--output", required=True)
+    p.add_argument("--metrics", nargs="+", help="Explicit metric names, overriding tier defaults")
+    p.add_argument("--require-metrics", action="store_true", help="Fail on unavailable or incomplete metrics")
     p.add_argument("--tier", default="basic", choices=["basic", "professional"],
                    help="Metric tier: basic (no deep models) or professional (all)")
     args = p.parse_args()
 
     samples = load_manifest(args.manifest)
     task_cls = get_task(args.task)
-    metric_names = task_cls.default_metrics(args.tier)
+    metric_names = args.metrics or task_cls.default_metrics(args.tier)
 
     if args.labels and len(args.labels) != len(args.predictions):
         raise SystemExit("--labels must match --predictions in length")
     labels = args.labels or [f"alg{i}" for i in range(len(args.predictions))]
+    if len(set(labels)) != len(labels):
+        raise SystemExit("Algorithm labels must be unique")
 
     os.makedirs(args.output, exist_ok=True)
 
@@ -92,6 +119,10 @@ def main() -> int:
     for label, pred_path in zip(labels, args.predictions):
         preds = load_predictions(pred_path)
         scores = score_one(args.task, metric_names, preds, samples)
+        if args.require_metrics:
+            for name, values in scores.items():
+                if values.get("available") is False or values.get("coverage", 1.0) < 1.0:
+                    raise RuntimeError(f"{label}: required metric {name} unavailable/incomplete: {values.get('reason', values.get('errors'))}")
         all_scores[label] = scores
 
     # Aggregate into a flat, comparison-friendly table.
@@ -103,6 +134,8 @@ def main() -> int:
 
     with open(os.path.join(args.output, "scores.json"), "w") as f:
         f.write(dumps_jsonable({"task": args.task, "tier": args.tier,
+                                "metrics": metric_names,
+                                "ranking_note": "Relative min-max ranking within this comparison, not absolute quality. Basic audio features measure reference similarity, not aesthetics.",
                                 "algorithms": all_scores, "ranking": ranking}))
 
     with open(os.path.join(args.output, "env.json"), "w") as f:

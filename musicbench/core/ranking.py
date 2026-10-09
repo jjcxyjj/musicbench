@@ -25,6 +25,10 @@ DEFAULT_WEIGHTS: Dict[str, Tuple[float, bool]] = {
     "fad.fad": (1.5, False),            # lower is better
     "kl_div.kl": (1.0, False),          # lower is better
     "clap_score.clap": (1.5, True),     # higher is better
+    "songeval.coherence": (1.0, True),
+    "songeval.musicality": (1.0, True),
+    "songeval.memorability": (1.0, True),
+    "songeval.clarity": (1.0, True),
     # beat tracking
     "beat_fmeasure.f_measure": (1.0, True),
     "beat_fmeasure.cemgil": (0.5, True),
@@ -67,12 +71,16 @@ def rank(
     # Flatten each algorithm's metrics into scalar key -> value.
     flat: Dict[str, Dict[str, float]] = {}
     for alg, scores in algorithm_scores.items():
-        fd = _flatten(scores)
-        flat[alg] = {k: float(v) for k, v in fd.items() if isinstance(v, (int, float))}
+        eligible = {group: values for group, values in scores.items()
+                    if not isinstance(values, dict) or
+                    (values.get("available") is not False and values.get("coverage", 1.0) == 1.0)}
+        fd = _flatten(eligible)
+        flat[alg] = {k: float(v) for k, v in fd.items()
+                     if isinstance(v, (int, float)) and not isinstance(v, bool)}
 
     # Decide which metrics to use: must be present and finite in EVERY algorithm,
     # and have a defined weight.
-    keys = sorted({k for alg in flat for k in flat[alg] if k in w})
+    keys = sorted({k for scores in algorithm_scores.values() for k in _flatten(scores) if k in w})
     used_keys: List[str] = []
     for k in keys:
         vals = [flat[alg].get(k, float("nan")) for alg in flat]
@@ -84,7 +92,11 @@ def rank(
     for k in used_keys:
         vals = [flat[alg][k] for alg in flat]
         lo, hi = min(vals), max(vals)
-        rng = (hi - lo) or 1e-12
+        if hi == lo:
+            for alg in flat:
+                norm[alg][k] = 0.5
+            continue
+        rng = hi - lo
         higher_better = w[k][1]
         for alg in flat:
             v = flat[alg][k]
@@ -107,7 +119,7 @@ def rank(
                 "score": round(score, 6),
                 "breakdown": {k: round(norm[alg][k], 6) for k in used_keys},
                 "used_metrics": used_keys,
-                "skipped_metrics": [k for k in sorted(flat[alg]) if k not in used_keys],
+                "skipped_metrics": [k for k in keys if k not in used_keys],
             }
         )
     ranking.sort(key=lambda r: r["score"], reverse=True)
