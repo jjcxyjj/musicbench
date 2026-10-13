@@ -41,11 +41,13 @@ def load_metric_profile(path):
         if key in ('HF_HOME', 'TORCH_HOME'):
             profile['runtime_environment'][key] = resolve(value, path.parent)
     for options in profile['metric_options'].values():
-        for key in ('repo', 'checkpoint'):
+        for key in ('repo', 'checkpoint', 'muq_model', 'audio_model', 'text_model'):
             if options.get(key):
                 options[key] = resolve(options[key], path.parent)
         if str(options.get('model', '')).startswith(('.', '/', '~')):
             options['model'] = resolve(options['model'], path.parent)
+        if options.get('separation', {}).get('repo'):
+            options['separation']['repo'] = resolve(options['separation']['repo'], path.parent)
     if data.get('setup_verification', {}).get('mode') == 'imports':
         print('[notice] Metric libraries configured; model weights have not been checked yet.')
     return profile
@@ -144,7 +146,7 @@ def interactive(catalog_path, task=None, metric_profile=None):
     reference = None
     if task == 'text2music':
         inputs['style_prompt'] = ask_bool('清单中有风格描述吗？')
-        inputs['lyrics'] = ask_bool('清单中有目标歌词吗？', False)
+        inputs['lyrics'] = ask_bool('已标注有人声的样本有目标歌词吗？（纯音乐无需歌词）', False)
         inputs['reference_audio'] = ask_bool('有用于 FAD 的真实音乐参考集合吗？', False)
         if dataset['name'] == 'feature_json':
             dataset['caption_field'] = ask('风格描述字段名', 'Qwen_caption')
@@ -192,16 +194,20 @@ def interactive(catalog_path, task=None, metric_profile=None):
         if name == 'songeval':
             options['repo'] = ask('已跑通的 SongEval 仓库路径', options.get('repo', ROOT / 'third_party/SongEval'))
             options['env'] = ask('SongEval conda 环境', options.get('env', 'songeval'))
+            options['muq_model'] = ask('SongEval MuQ 本地模型目录', options.get('muq_model', '/data/musicbench-evaluators/MuQ/weights/muq'))
         else:
             config['metric_environments'][name] = ask(f'{name} conda 环境', config['metric_environments'].get(name, ({'clap_score': 'clap', 'fad': 'clap'}.get(name, name)) if task == 'text2music' else 'current'))
         options['cuda_visible_devices'] = ask(f'{name} 评测显卡编号（inherit/cpu）', options.get('cuda_visible_devices', 'inherit'))
         options['device'] = ask(f'{name} 设备 auto/cpu/cuda', options.get('device', 'auto'))
         if name in ('clap_score', 'fad', 'mulan', 'lyrics'):
-            defaults = {'clap_score': 'laion/clap-htsat-fused', 'fad': 'laion/clap-htsat-fused',
-                        'mulan': 'OpenMuQ/MuQ-MuLan-large', 'lyrics': 'large-v3'}
-            options['model'] = ask(f'{name} 模型标识或本地目录', options.get('model', defaults[name]))
+            defaults = {'clap_score': '/data/musicbench-evaluators/CLAP/weights/clap', 'fad': '/data/musicbench-evaluators/CLAP/weights/clap',
+                        'mulan': '/data/musicbench-evaluators/MuQ/weights/mulan', 'lyrics': '/data/musicbench-evaluators/faster-whisper/weights/large-v3'}
+            options['model'] = ask(f'{name} 模型本地目录（不联网下载）', options.get('model', defaults[name]))
+        if name == 'mulan':
+            options['audio_model'] = ask('MuQ-MuLan 音频编码器本地目录', options.get('audio_model', '/data/musicbench-evaluators/MuQ/weights/muq'))
+            options['text_model'] = ask('MuQ-MuLan 文本编码器本地目录', options.get('text_model', '/data/musicbench-evaluators/MuQ/weights/xlm-roberta-base'))
         if name == 'audiobox':
-            options['checkpoint'] = ask('Audiobox 权重路径（空白使用官方默认）', options.get('checkpoint', ''))
+            options['checkpoint'] = ask('Audiobox 本地 checkpoint.pt 路径', options.get('checkpoint', '/data/musicbench-evaluators/audiobox-aesthetics/weights/checkpoint.pt'))
         if name == 'lyrics':
             options['language'] = choose('清单未指定语言时的默认歌词语言', sorted(['zh', 'en'], key=lambda v: v != options.get('language', 'zh')))
             options['audio_source'] = choose('歌词音频处理协议（所有算法一致）', sorted(['demucs', 'mix'], key=lambda v: v != options.get('audio_source', 'demucs')))
@@ -211,7 +217,8 @@ def interactive(catalog_path, task=None, metric_profile=None):
                 options['separation'] = {**separation, 'env': ask('人声分离 conda 环境', separation.get('env', 'demucs')),
                                          'device': ask('人声分离设备 auto/cpu/cuda', separation.get('device', 'auto')),
                                          'cuda_visible_devices': ask('人声分离显卡编号', separation.get('cuda_visible_devices', options['cuda_visible_devices'])),
-                                         'model': ask('Demucs 模型', separation.get('model', 'htdemucs'))}
+                                         'model': ask('Demucs 模型', separation.get('model', 'htdemucs')),
+                                         'repo': ask('Demucs 本地权重目录（含模型 YAML）', separation.get('repo', '/data/musicbench-evaluators/demucs/weights'))}
         config['metric_options'][name] = options
     return config
 
@@ -356,8 +363,11 @@ def validate(config, base):
     for name, options in config.get('metric_options', {}).items():
         if name == 'songeval':
             options['repo'] = resolve(options.get('repo', ROOT / 'third_party/SongEval'), base)
-        if options.get('checkpoint'):
-            options['checkpoint'] = resolve(options['checkpoint'], base)
+        for path_key in ('checkpoint', 'muq_model', 'audio_model', 'text_model'):
+            if options.get(path_key):
+                options[path_key] = resolve(options[path_key], base)
+        if options.get('separation', {}).get('repo'):
+            options['separation']['repo'] = resolve(options['separation']['repo'], base)
         if options.get('model') and (str(options['model']).startswith(('.', '/', '~'))):
             options['model'] = resolve(options['model'], base)
         if name == 'lyrics' and options.get('audio_source', 'demucs') not in ('demucs', 'mix'):
@@ -560,7 +570,8 @@ def execute(config, output):
                     try:
                         run(f'score-{label}-{metric}', options.get('env', config.get('metric_environments', {}).get(metric)), [ROOT / 'scripts/songeval_worker.py',
                             '--repo', options.get('repo', ROOT / 'third_party/SongEval'), '--input', target / 'input.json',
-                            '--output', target / 'raw.json', '--device', options.get('device', 'auto')], options=options)
+                            '--output', target / 'raw.json', '--device', options.get('device', 'auto'),
+                            '--muq-model', options.get('muq_model', '')], options=options)
                         from musicbench.evaluation.primary import aggregate
                         raw = json.loads((target / 'raw.json').read_text())
                         from musicbench.metrics.songeval import DIMENSIONS

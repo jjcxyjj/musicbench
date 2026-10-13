@@ -5,6 +5,9 @@ import importlib.util
 import json
 from pathlib import Path
 import subprocess
+import os
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 def main():
@@ -13,7 +16,10 @@ def main():
     p.add_argument("--input", required=True)
     p.add_argument("--output", required=True)
     p.add_argument("--device", choices=["auto", "cpu", "cuda", "mps"], default="auto")
+    p.add_argument('--muq-model', default=os.environ.get('MUSICBENCH_SONGEVAL_MUQ'))
     args = p.parse_args()
+    from musicbench.evaluation.offline import enforce_offline, load_muq
+    enforce_offline()
     import librosa
     import numpy as np
     import torch
@@ -34,8 +40,8 @@ def main():
     model = module.Generator(**config)
     model.load_state_dict(load_file(str(checkpoint), device="cpu"), strict=True)
     model = model.to(device).eval()
-    muq_name = "OpenMuQ/MuQ-large-msd-iter"
-    muq = MuQ.from_pretrained(muq_name).to(device).eval()
+    muq_name = args.muq_model
+    muq = load_muq(muq_name).to(device).eval()
     rows = json.loads(Path(args.input).read_text(encoding="utf-8"))
     results, errors = [], []
     dimensions = ["coherence", "musicality", "memorability", "clarity", "naturalness"]

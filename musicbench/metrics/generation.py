@@ -5,8 +5,7 @@ degrade gracefully: if the dependency or model is unavailable, they return
 ``{"available": false, "reason": ...}`` instead of crashing, so a "basic"
 benchmark can still complete without them.
 
-Model download uses ``HF_ENDPOINT=https://hf-mirror.com`` when set (China
-mirror); see each function's docstring.
+Local model paths are required; remote model downloads are disabled.
 """
 
 from __future__ import annotations
@@ -42,10 +41,12 @@ def _load_clap() -> Optional[Any]:
     try:
         from transformers import ClapModel, ClapProcessor  # type: ignore
 
-        ckpt = os.environ.get("MUSICBENCH_CLAP_MODEL", "laion/clap-htsat-fused")
-        model = ClapModel.from_pretrained(ckpt).eval()
+        from musicbench.evaluation.offline import enforce_offline, local_directory
+        enforce_offline()
+        ckpt = local_directory(os.environ.get("MUSICBENCH_CLAP_MODEL"), "MUSICBENCH_CLAP_MODEL")
+        model = ClapModel.from_pretrained(ckpt, local_files_only=True).eval()
         model.requires_grad_(False)
-        processor = ClapProcessor.from_pretrained(ckpt)
+        processor = ClapProcessor.from_pretrained(ckpt, local_files_only=True)
         return {"model": model, "processor": processor, "ckpt": ckpt}
     except Exception as exc:  # pragma: no cover - dependency optional
         return None

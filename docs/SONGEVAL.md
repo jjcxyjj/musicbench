@@ -1,80 +1,36 @@
-# SongEval integration
+# SongEval 本地接入
 
-Upstream: https://github.com/ASLP-lab/SongEval
+使用你已经跑通的仓库和 conda 环境，无需重新安装。当前任务固定包含 SongEval，不区分简单/复杂验证。完整手工准备与缺依赖排查见 [离线教程](METRIC_SETUP.md)。
 
-The downloaded checkout lives in `third_party/SongEval` (ignored by Git).
-The integration runs upstream `Generator` and its checkpoint with MuQ hidden
-state 6, mono 24 kHz audio, eval mode and inference mode, matching `eval.py`.
-Weights are loaded strictly. No upstream source is modified or redistributed.
+在 configs/metrics.local.yaml 中配置：
 
-## Setup
-
-```bash
-git clone https://github.com/ASLP-lab/SongEval.git third_party/SongEval
-conda env create -f envs/songeval.yml
-export MUSICBENCH_SONGEVAL_PYTHON="$(conda run -n musicbench-songeval python -c 'import sys; print(sys.executable)')"
-export MUSICBENCH_SONGEVAL_DEVICE=cpu  # auto uses CUDA if available, otherwise CPU
+```yaml
+metric_options:
+  songeval:
+    env: your_songeval_env
+    repo: /data/musicbench-evaluators/SongEval
+    muq_model: /data/musicbench-evaluators/MuQ/weights/muq
+    device: auto
 ```
 
-First execution downloads `OpenMuQ/MuQ-large-msd-iter`; allow network access
-or populate the Hugging Face cache first. The scoring checkpoint is provided
-by the upstream repository. CPU full-song inference can be slow and memory
-intensive. Audio is not silently truncated or chunked, since that changes the
-meaning of full-song structure and coherence scores.
+repo 包含官方 model.py、config.yaml、ckpt/model.safetensors。muq_model 是 MuQ-large-msd-iter 的完整本地目录（config.json 和权重），不填远端模型 ID。所有模型加载禁止联网；缺少文件会直接报错，不下载。模型可以保留在你对应库的目录中。
 
-## Run
-
-`./run.sh text2music`, professional tier, includes SongEval. Alternatively:
+代码获取（仅联网准备机执行，已有仓库跳过）：
 
 ```bash
-python scripts/score.py --manifest dataset/manifest.json --task text2music \
-  --predictions preds/base.jsonl preds/lora.jsonl --labels base lora \
-  --metrics songeval --require-metrics --output runs/songeval
-python scripts/plot.py --scores runs/songeval/scores.json --output runs/songeval
+git clone https://github.com/ASLP-lab/SongEval.git /data/musicbench-evaluators/SongEval
+git clone https://github.com/tencent-ailab/MuQ.git /data/musicbench-evaluators/MuQ
 ```
 
-Settings: `MUSICBENCH_SONGEVAL_REPO` overrides the checkout location;
-`MUSICBENCH_SONGEVAL_TIMEOUT` sets the worker timeout in seconds (default 3600).
-The Python variable must be an executable path, not a shell command.
+将已配好的代码、环境和本地权重复制到离线服务器，然后检查：
 
-## Interpretation
+```bash
+python scripts/setup_metrics.py --metrics songeval
+./run.sh text2music
+```
 
-Coherence, musicality, memorability and clarity are averaged separately,
-with raw per-sample scores, errors, coverage, checkpoint SHA256, upstream Git
-commit and runtime device recorded in scores.json. Outputs are on a 1-5 scale.
-Naturalness concerns vocal breathing and phrasing: it is reported only for
-samples with JSON boolean `metadata.has_vocal: true`, and excluded from the
-default ranking. Unknown vocal status and instrumentals receive null.
-Incomplete SongEval results do not enter ranking. `--require-metrics` makes
-unavailable/incomplete metrics fatal; the default reports them as unavailable.
+集成按官方方法使用 mono 24kHz 音频、MuQ hidden state 6、严格加载评分模型权重和 eval/inference 模式。结果保存五维分数、覆盖率、错误、checkpoint SHA256、上游提交和运行设备；不偷偷裁剪整曲。naturalness 只统计明确 has_vocal=true 的人声样本，纯音乐和未知标注显示不适用。
 
-SongEval measures predicted aesthetics, not erhu/pipa identity or prompt
-adherence. For Chinese instrumental LoRA evaluation, retain expert blind
-listening and instrument-specific checks. Domain validity on this material
-has not been established by this integration.
+兼容旧的单指标 score.py 入口时，设置 MUSICBENCH_SONGEVAL_REPO、MUSICBENCH_SONGEVAL_ENV、MUSICBENCH_SONGEVAL_MUQ；后者同样为本地 MuQ 目录。新工作流优先使用上面的 YAML。
 
-Rank scores are relative to the compared algorithms and weights. Basic
-feature MAE measures similarity to a reference, not musical beauty; prefer
-`--metrics songeval clap_score` for a focused aesthetics/alignment comparison.
-Use enough independent songs, fixed prompts/seeds and separate held-out
-performers/compositions; ten clips are only a smoke test.
-
-## Upstream licensing
-
-Upstream README declares CC BY-NC-SA 4.0 / non-commercial use, while its
-LICENSE file contains Apache-2.0. This inconsistency remains unresolved;
-confirm applicability with the authors before commercial use of code/weights.
-Keep upstream attribution and cite Yao et al., SongEval (arXiv:2505.10793).
-
-## Other benchmark fixes
-
-- FAD uses the symmetric covariance sandwich square root; both distributions
-  require at least two samples. Embeddings here are CLAP, so disclose that
-  variant when comparing published FAD values.
-- KL computes per-clip PANNs outputs then normalizes mean class scores into
-  distributions. It is a dataset-level normalized-tag KL, not paired KL.
-- Scoring rejects missing/duplicate/unknown IDs, duplicate labels and missing
-  generated files. Relative generated paths resolve against predictions.jsonl.
-- Tied metrics receive equal neutral ranking scores. Unavailable and partial
-  metric groups are excluded consistently across algorithms.
-- Plots exclude counters/booleans and show missing values as missing.
+SongEval 预测美学感知，不能替代歌词、风格一致性评分或人工听评。上游许可证以你使用版本的仓库文件为准：[SongEval 官方仓库](https://github.com/ASLP-lab/SongEval)。

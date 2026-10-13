@@ -37,15 +37,18 @@ def verify(job):
     component, mode = job['component'], job['mode']
     options = job.get('options', {})
     os.environ.update(options.get('environment', {}))
-    if mode == 'check':
-        os.environ.update(HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1')
+    from musicbench.evaluation.offline import enforce_offline, validate_assets, local_directory, load_mulan, load_muq
+    enforce_offline()
+    errors = {}
     for module in MODULES[component]:
-        importlib.import_module(module)
+        try:
+            importlib.import_module(module)
+        except Exception as exc:
+            errors[module] = f'{type(exc).__name__}: {exc}'
+    if errors:
+        return {'status': 'failed', 'component': component, 'missing_dependencies': list(errors),
+                'dependency_errors': errors, 'reason': 'Missing or broken libraries; see docs/METRIC_SETUP.md'}
     import torch
-    if mode == 'check':
-        def no_download(*args, **kwargs):
-            raise RuntimeError('Offline check: model weight missing from cache; run setup without --check-only first')
-        torch.hub.download_url_to_file = no_download
     result = {'status': 'ready', 'component': component, 'mode': mode,
               'python': sys.executable, 'torch_version': torch.__version__, 'load_device': 'cpu',
               'packages': {dist.metadata['Name']: dist.version for dist in importlib.metadata.distributions()}}
@@ -61,18 +64,19 @@ def verify(job):
     if mode == 'imports':
         result['weights_verified'] = False
         return result
+    validate_assets(component, options)
     if component == 'audiobox':
         from audiobox_aesthetics.infer import initialize_predictor
-        predictor = initialize_predictor(ckpt=options.get('checkpoint') or None)
+        predictor = initialize_predictor(ckpt=options['checkpoint'])
         predictor.device = torch.device('cpu')
         predictor.model = predictor.model.to(predictor.device).eval()
         result['model'] = options.get('checkpoint') or 'facebook/audiobox-aesthetics'
         del predictor
     elif component == 'clap':
         from transformers import ClapModel, ClapProcessor
-        name = options.get('model', 'laion/clap-htsat-fused')
-        model = ClapModel.from_pretrained(name).to('cpu').eval()
-        processor = ClapProcessor.from_pretrained(name)
+        name = options['model']
+        model = ClapModel.from_pretrained(name, local_files_only=True).to('cpu').eval()
+        processor = ClapProcessor.from_pretrained(name, local_files_only=True)
         with torch.inference_mode():
             features = model.get_text_features(**processor(text=['piano solo'], return_tensors='pt'))
         if not torch.isfinite(features).all():
@@ -80,8 +84,8 @@ def verify(job):
         result['model'] = name
     elif component == 'mulan':
         from muq import MuQMuLan
-        name = options.get('model', 'OpenMuQ/MuQ-MuLan-large')
-        model = MuQMuLan.from_pretrained(name).to('cpu').eval()
+        name = options['model']
+        model = load_mulan(options).to('cpu').eval()
         # Text encoding exercises the dependent text encoder and tokenizer caches too.
         with torch.inference_mode():
             features = model(texts=['piano solo'])
@@ -90,21 +94,20 @@ def verify(job):
         result['model'] = name
     elif component == 'lyrics':
         from faster_whisper import WhisperModel
-        from faster_whisper.utils import download_model
-        name = options.get('model', 'large-v3')
-        path = name if Path(name).is_dir() else download_model(name, local_files_only=mode == 'check')
-        model = WhisperModel(path, device='cpu', compute_type='int8', local_files_only=mode == 'check')
+        name = options['model']
+        path = name
+        model = WhisperModel(path, device='cpu', compute_type='int8', local_files_only=True)
         result.update(model=name, model_path=str(Path(path).resolve()))
     elif component == 'demucs':
         from demucs.pretrained import get_model
         name = options.get('model', 'htdemucs')
-        model = get_model(name).to('cpu').eval()
+        model = get_model(name, repo=Path(options['repo'])).to('cpu').eval()
         result['model'] = name
     elif component == 'songeval':
         from muq import MuQ
         from omegaconf import OmegaConf
         from safetensors.torch import load_file
-        repo = Path(job['repo']).resolve()
+        repo = Path(options['repo']).resolve()
         checkpoint = repo / 'ckpt/model.safetensors'
         if not (repo / 'model.py').is_file() or not checkpoint.is_file():
             raise ValueError(f'SongEval code or checkpoint missing: {repo}')
@@ -118,12 +121,12 @@ def verify(job):
         config.pop('_target_', None)
         model = module.Generator(**config)
         model.load_state_dict(load_file(str(checkpoint), device='cpu'), strict=True)
-        encoder = MuQ.from_pretrained('OpenMuQ/MuQ-large-msd-iter').to('cpu').eval()
+        encoder = load_muq(options.get('muq_model')).to('cpu').eval()
         digest = hashlib.sha256()
         with checkpoint.open('rb') as handle:
             for chunk in iter(lambda: handle.read(1024 * 1024), b''):
                 digest.update(chunk)
-        result.update(repo=str(repo), checkpoint_sha256=digest.hexdigest(), muq='OpenMuQ/MuQ-large-msd-iter')
+        result.update(repo=str(repo), checkpoint_sha256=digest.hexdigest(), muq=options.get('muq_model'))
     result['weights_verified'] = True
     return result
 

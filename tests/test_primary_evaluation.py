@@ -13,7 +13,7 @@ from musicbench.workflow import ROOT, validate, execute, prepare_samples, parame
 
 
 def test_metric_inputs_distinguish_lyrics_from_style():
-    samples = [Sample(id='x', audio_path='', metadata={'lyrics': '你好'})]
+    samples = [Sample(id='x', audio_path='', metadata={'lyrics': '你好', 'has_vocal': True})]
     plan = resolve_plan(PRIMARY_RULES, samples)
     assert plan['audiobox']['status'] == 'scheduled'
     assert plan['lyrics']['status'] == 'scheduled'
@@ -67,9 +67,11 @@ def test_real_chinese_g2p():
         phonemes('你好ABC', 'zh')
 
 
-def test_audiobox_official_bridge(monkeypatch):
+def test_audiobox_official_bridge(monkeypatch, tmp_path):
     from musicbench.evaluation.primary import audiobox
     calls = []
+    checkpoint = tmp_path / 'checkpoint.pt'
+    checkpoint.touch()
     class Predictor:
         def forward(self, rows):
             calls.append(rows)
@@ -77,20 +79,21 @@ def test_audiobox_official_bridge(monkeypatch):
                 raise RuntimeError('decode failed')
             return [{'CE': 7, 'CU': 8, 'PC': 6, 'PQ': 9}]
     def initialize_predictor(ckpt=None):
-        assert ckpt == '/weights/checkpoint.pt'
+        assert ckpt == str(checkpoint)
         return Predictor()
     monkeypatch.setitem(sys.modules, 'audiobox_aesthetics', SimpleNamespace())
     monkeypatch.setitem(sys.modules, 'audiobox_aesthetics.infer', SimpleNamespace(initialize_predictor=initialize_predictor))
-    result = audiobox([{'id': 'a', 'audio_path': 'good'}, {'id': 'b', 'audio_path': 'bad'}], {'checkpoint': '/weights/checkpoint.pt'})
+    result = audiobox([{'id': 'a', 'audio_path': 'good'}, {'id': 'b', 'audio_path': 'bad'}], {'checkpoint': str(checkpoint)})
     assert result['CE'] == 7
     assert result['coverage'] == 0.5
     assert calls == [[{'path': 'good'}], [{'path': 'bad'}]]
 
 
-def test_asr_does_not_receive_target_lyrics(monkeypatch):
+def test_asr_does_not_receive_target_lyrics(monkeypatch, tmp_path):
     from musicbench.evaluation import primary
     monkeypatch.setattr(primary, 'device_name', lambda _: 'cpu')
     calls = []
+    (tmp_path / 'config.json').write_text('{}')
     class Model:
         def __init__(self, *args, **kwargs):
             pass
@@ -105,7 +108,7 @@ def test_asr_does_not_receive_target_lyrics(monkeypatch):
     monkeypatch.setitem(sys.modules, 'phonemizer', SimpleNamespace(phonemize=lambda text, **kw: text))
     monkeypatch.setitem(sys.modules, 'phonemizer.separator', SimpleNamespace(Separator=lambda **kw: None))
     result = primary.lyrics([{'id': 'a', 'audio_path': '/vocals.wav',
-                             'metadata': {'lyrics': 'secret target', 'language': 'en'}}], {'device': 'cpu'})
+                             'metadata': {'lyrics': 'secret target', 'language': 'en'}}], {'device': 'cpu', 'model': str(tmp_path)})
     assert calls[0][0] == '/vocals.wav'
     assert result['wer'] == 1
     assert result['coverage'] == 1
@@ -225,7 +228,8 @@ def test_generation_full_primary_pipeline(tmp_path, monkeypatch, break_audiobox,
     expected = ['audiobox', 'separation', 'lyrics', 'clap_score', 'mulan'] + (['fad'] if with_reference else [])
     assert [r['metric'] for r in requests] == expected * 2
     lyrics_request = next(r for r in requests if r['metric'] == 'lyrics')
-    assert len(lyrics_request['rows']) == 4
+    assert len(lyrics_request['rows']) == 2
+    assert all(r['metadata']['has_vocal'] is True for r in lyrics_request['rows'])
     assert 'status: ' + ('failed' if break_audiobox else 'completed') in (output / 'status.yaml').read_text()
 
 

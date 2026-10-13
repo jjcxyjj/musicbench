@@ -61,7 +61,7 @@ seed: 42
 
 现有的 dynamics_path、melody_path、rhythm_path、latent_path、path_original 及未来新增的特征/标注均保留；完整原记录放在 `metadata.source_record`，新增顶层字段也带入 metadata，原 ground_truth 保留。条件特征文件暂不复制，保留原路径，适用于同一服务器运行；迁移到其他服务器需要一并搬运这些文件或调整适配器路径。
 
-后续增加 `lyrics` 和 `language`（zh/en）即可供歌词评测使用；若字段名不同，用 lyrics_field/language_field 映射。没有歌词时不从 caption 伪造歌词。混合数据中部分有歌词时，省略 `inputs.lyrics` 可按记录自动选择适用子集；`inputs.lyrics: true` 则要求所有抽中样本都有歌词，false 禁用歌词指标。新增标注会被保留，但新增指标仍须注册评测实现与任务规则。
+后续增加 `lyrics` 和 `language`（zh/en）即可供歌词评测使用；若字段名不同，用 lyrics_field/language_field 映射。没有歌词时不从 caption 伪造歌词。混合数据中部分有歌词时，省略 `inputs.lyrics` 可按记录自动选择适用子集；`inputs.lyrics: true` 则要求所有明确标注 has_vocal=true 的抽中样本都有歌词，has_vocal=false 的纯音乐不要求歌词；未知人声标注不评歌词并记录排除原因，false 禁用歌词指标。新增标注会被保留，但新增指标仍须注册评测实现与任务规则。
 
 可单独检查抽样和打包，无需启动模型：
 
@@ -78,7 +78,7 @@ inputs:
   reference_audio: false
 ```
 
-true 表示声明每条抽样记录都有对应输入，缺失会报错；false 显式禁用对应条件评测；不写则根据样本字段选择适用子集。混合数据集可省略 style_prompt/lyrics 标志，仅对有对应字段的样本评分，记录适用样本 ID 与数量。不提供输入的指标标为 not_applicable，不伪造零分。
+true 表示声明每条抽样记录都有对应输入，缺失会报错（歌词仅要求 has_vocal=true 的人声样本，纯音乐不要求）；false 显式禁用对应条件评测；不写则根据样本字段选择适用子集。混合数据集可省略 style_prompt/lyrics 标志，仅对有对应字段的样本评分；歌词还要求 has_vocal=true，记录适用样本 ID 与数量。不提供输入的指标标为 not_applicable，不伪造零分。
 
 FAD 的参考集合需要显式声明；不会因 manifest 恰好有音频就自动启用：
 
@@ -117,33 +117,33 @@ parameters: {}
 
 ## 评测环境
 
-主环境只安装 MusicBench 基础依赖。可使用 [配置脚本](METRIC_SETUP.md) 准备库与权重，也可按下表复用已有独立环境。
+主环境只安装 MusicBench 基础依赖。按 [离线教程](METRIC_SETUP.md) 手动准备库与本地权重，再用配置脚本检查，也可按下表复用已有独立环境。
 
 | 评分器 | 主要依赖 | 模型配置 |
 | --- | --- | --- |
-| Audiobox | audiobox_aesthetics / torch | checkpoint 留空用官方默认；也可指定 checkpoint.pt |
-| SongEval | 原项目依赖 | repo 指向已跑通仓库；env 填原有环境 |
-| CLAP / FAD | torch / transformers / librosa | 默认 laion/clap-htsat-fused |
-| MuQ-MuLan | muq / torch / librosa | 默认 OpenMuQ/MuQ-MuLan-large |
-| 歌词 | faster-whisper / pypinyin / phonemizer | 默认 large-v3，可填本地 faster-whisper 模型路径 |
-| 人声分离 | demucs / torch | 默认 htdemucs，可独立环境 |
+| Audiobox | audiobox_aesthetics / torch | checkpoint 必须为本地 checkpoint.pt 文件 |
+| SongEval | 原项目依赖 | repo 指向已跑通仓库；env 填原有环境；muq_model 为本地 MuQ 目录 |
+| CLAP / FAD | torch / transformers / librosa | 本地 CLAP 完整模型目录 |
+| MuQ-MuLan | muq / torch / librosa | 本地 MuQ-MuLan 目录与两个编码器目录 |
+| 歌词 | faster-whisper / pypinyin / phonemizer | 本地 faster-whisper 模型目录 |
+| 人声分离 | demucs / torch | htdemucs + 本地 repo，可独立环境 |
 
-对应模板为 envs/metric-*.yml。模板不会自动创建环境或安装权重。CLAP、MuLan 和 Audiobox 可按库行为下载官方权重；无网络运行请预先缓存或使用本地权重。GPU 版 PyTorch/CTranslate2 需与实际 CUDA/驱动兼容。
+对应模板为 envs/metric-*.yml，在联网准备机手工创建后迁移环境。当前主指标只接受本地模型路径，缺文件直接报错；评分器禁止联网，不依赖自动缓存下载。GPU 版 PyTorch/CTranslate2 需与实际 CUDA/驱动兼容。
 
 ```yaml
 metric_environments: {audiobox: audiobox, lyrics: lyrics, clap_score: clap, mulan: mulan, fad: clap}
 metric_options:
-  songeval: {repo: /path/to/SongEval, env: your_songeval_env, device: auto, cuda_visible_devices: '0'}
+  songeval: {repo: /path/to/SongEval, env: your_songeval_env, muq_model: /data/musicbench-evaluators/MuQ/weights/muq, device: auto, cuda_visible_devices: '0'}
   lyrics:
-    model: large-v3
+    model: /data/musicbench-evaluators/faster-whisper/weights/large-v3
     device: auto
     language: zh
     beam_size: 5
     audio_source: demucs
-    separation: {env: demucs, device: auto, model: htdemucs, cuda_visible_devices: '0'}
+    separation: {env: demucs, device: auto, model: htdemucs, repo: /data/musicbench-evaluators/demucs/weights, cuda_visible_devices: '0'}
 ```
 
-其他评测器的 metric_options 同样可设 env、device、cuda_visible_devices、timeout；model 表示官方标识或本地模型目录。Audiobox 官方库自动选择设备，指定 device 后会将模型迁移至该设备。
+其他评测器的 metric_options 同样可设 env、device、cuda_visible_devices、timeout；model 表示本地模型目录（Demucs 为本地 repo 中的模型名称）。Audiobox 官方库自动选择设备，指定 device 后会将模型迁移至该设备。
 
 ## 歌词协议
 

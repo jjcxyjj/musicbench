@@ -7,6 +7,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+from musicbench.evaluation.offline import enforce_offline, local_file, local_directory, load_mulan
+
 
 def versions(*packages):
     out = {}
@@ -36,7 +38,7 @@ def aggregate(rows, dimensions, expected, errors=None):
 
 def audiobox(rows, options):
     from audiobox_aesthetics.infer import initialize_predictor
-    predictor = initialize_predictor(ckpt=options.get('checkpoint') or None)
+    predictor = initialize_predictor(ckpt=local_file(options.get('checkpoint'), 'audiobox.checkpoint'))
     if options.get('device', 'auto') != 'auto':
         import torch
         predictor.device = torch.device(options['device'])
@@ -67,14 +69,14 @@ def style(rows, options, name):
     results, errors = [], []
     if name == 'mulan':
         from muq import MuQMuLan
-        checkpoint = options.get('model', 'OpenMuQ/MuQ-MuLan-large')
-        model = MuQMuLan.from_pretrained(checkpoint).to(device).eval()
+        checkpoint = local_directory(options.get('model'), 'mulan.model')
+        model = load_mulan(options).to(device).eval()
         sr, key = 24000, 'similarity'
     else:
         from transformers import ClapModel, ClapProcessor
-        checkpoint = options.get('model', 'laion/clap-htsat-fused')
-        model = ClapModel.from_pretrained(checkpoint).to(device).eval()
-        processor = ClapProcessor.from_pretrained(checkpoint)
+        checkpoint = local_directory(options.get('model'), 'clap.model')
+        model = ClapModel.from_pretrained(checkpoint, local_files_only=True).to(device).eval()
+        processor = ClapProcessor.from_pretrained(checkpoint, local_files_only=True)
         sr, key = 48000, 'clap'
     with torch.inference_mode():
         for row in rows:
@@ -113,9 +115,9 @@ def fad(rows, options, references):
     if len(rows) < 2 or len(references) < 2:
         raise ValueError('FAD requires at least two generated and two reference audio files')
     device = device_name(options.get('device', 'auto'))
-    checkpoint = options.get('model', 'laion/clap-htsat-fused')
-    model = ClapModel.from_pretrained(checkpoint).to(device).eval()
-    processor = ClapProcessor.from_pretrained(checkpoint)
+    checkpoint = local_directory(options.get('model'), 'clap.model')
+    model = ClapModel.from_pretrained(checkpoint, local_files_only=True).to(device).eval()
+    processor = ClapProcessor.from_pretrained(checkpoint, local_files_only=True)
     def embed(paths):
         embeddings = []
         with torch.inference_mode():
@@ -141,11 +143,12 @@ def separate(rows, options, output_dir):
     results, errors = [], []
     model = options.get('model', 'htdemucs')
     device = device_name(options.get('device', 'auto'))
+    repo = local_directory(options.get('repo'), 'lyrics.separation.repo', config=False, weights=False)
     for index, row in enumerate(rows):
         try:
             destination = Path(output_dir) / f'sample_{index:06d}'
             subprocess.run([sys.executable, '-m', 'demucs', '--two-stems', 'vocals', '-n', model,
-                            '-d', device, '-o', str(destination), row['audio_path']], check=True,
+                            '--repo', repo, '-d', device, '-o', str(destination), row['audio_path']], check=True,
                            timeout=options.get('timeout', 1800))
             files = list(destination.glob(f'{model}/*/vocals.wav'))
             if len(files) != 1:
@@ -164,8 +167,8 @@ def lyrics(rows, options):
     requested = device_name(options.get('device', 'auto'))
     if requested not in ('cpu', 'cuda'):
         raise ValueError('faster-whisper supports cpu/cuda; use CPU for this worker on macOS')
-    checkpoint = options.get('model', 'large-v3')
-    model = WhisperModel(checkpoint, device=requested,
+    checkpoint = local_directory(options.get('model'), 'lyrics.model', weights=False)
+    model = WhisperModel(checkpoint, device=requested, local_files_only=True,
                          compute_type=options.get('compute_type', 'float16' if requested == 'cuda' else 'int8'))
     results, errors = [], []
     for row in rows:
@@ -193,6 +196,7 @@ HANDLERS = {'audiobox': audiobox, 'lyrics': lyrics}
 
 
 def compute(job):
+    enforce_offline()
     name, rows, options = job['metric'], job['rows'], job.get('options', {})
     if name in ('mulan', 'clap_score'):
         return style(rows, options, name)

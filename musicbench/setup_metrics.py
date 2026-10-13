@@ -1,6 +1,5 @@
-"""Create isolated metric environments, preload weights, and publish a profile."""
+"""Offline evaluator diagnostics; installation and weight acquisition are manual."""
 from __future__ import annotations
-
 import argparse
 import copy
 from datetime import datetime
@@ -10,7 +9,6 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
-
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,6 +16,19 @@ METRICS = ('audiobox', 'songeval', 'lyrics', 'clap_score', 'mulan', 'fad')
 COMPONENTS = {'audiobox': 'metric-audiobox.yml', 'songeval': 'songeval.yml',
               'clap': 'metric-clap.yml', 'mulan': 'metric-mulan.yml',
               'lyrics': 'metric-lyrics.yml', 'demucs': 'metric-demucs.yml'}
+SOURCES = {'audiobox': 'https://github.com/facebookresearch/audiobox-aesthetics',
+           'songeval': 'https://github.com/ASLP-lab/SongEval',
+           'clap': 'https://github.com/huggingface/transformers',
+           'mulan': 'https://github.com/tencent-ailab/MuQ',
+           'lyrics': 'https://github.com/SYSTRAN/faster-whisper',
+           'demucs': 'https://github.com/facebookresearch/demucs'}
+
+
+def merge_defaults(defaults, overrides):
+    result = copy.deepcopy(defaults)
+    for key, value in overrides.items():
+        result[key] = merge_defaults(result[key], value) if isinstance(value, dict) and isinstance(result.get(key), dict) else copy.deepcopy(value)
+    return result
 
 
 def components_for(metrics, separation=True):
@@ -38,18 +49,8 @@ def parse_reuse(values):
     for value in values:
         key, sep, env = value.partition('=')
         if not sep or key not in COMPONENTS or not env.strip():
-            raise ValueError('--reuse must be COMPONENT=ENV, e.g. songeval=my_song_env or clap=/path/to/env')
+            raise ValueError('--reuse requires COMPONENT=existing_env_name_or_absolute_path')
         result[key] = env.strip()
-    return result
-
-
-def merge_defaults(defaults, overrides):
-    result = copy.deepcopy(defaults)
-    for key, value in overrides.items():
-        if isinstance(value, dict) and isinstance(result.get(key), dict):
-            result[key] = merge_defaults(result[key], value)
-        else:
-            result[key] = copy.deepcopy(value)
     return result
 
 
@@ -57,179 +58,87 @@ def env_args(conda, env):
     return [conda, 'run', '--no-capture-output', '-p' if os.path.isabs(env) else '-n', env]
 
 
-def base_profile(metrics, envs, repo, runtime, separation=True):
-    profile = {'version': 1, 'runtime_environment': runtime, 'metric_environments': {}, 'metric_options': {}}
-    for metric in metrics:
-        component = 'clap' if metric in ('clap_score', 'fad') else metric
-        if metric == 'songeval':
-            profile['metric_options'][metric] = {'env': envs[component], 'repo': str(repo), 'device': 'auto'}
-        else:
-            profile['metric_environments'][metric] = envs[component]
-            profile['metric_options'][metric] = {'device': 'auto'}
-        if metric in ('clap_score', 'fad'):
-            profile['metric_options'][metric]['model'] = 'laion/clap-htsat-fused'
-        if metric == 'mulan':
-            profile['metric_options'][metric]['model'] = 'OpenMuQ/MuQ-MuLan-large'
-        if metric == 'lyrics':
-            profile['metric_options'][metric].update(model='large-v3', audio_source='demucs' if separation else 'mix', language='zh')
-            if separation:
-                profile['metric_options'][metric]['separation'] = {'env': envs['demucs'], 'device': 'auto', 'model': 'htdemucs'}
-    return profile
-
-
-def write_yaml(path, value):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + '.tmp')
-    temporary.write_text(yaml.safe_dump(value, allow_unicode=True, sort_keys=False), encoding='utf-8')
-    temporary.replace(path)
-
-
 def run_setup(args):
-    metrics = list(dict.fromkeys(args.metrics))
-    components = components_for(metrics, not args.no_separation)
-    reuse = parse_reuse(args.reuse)
-    output = Path(args.output).expanduser().resolve()
-    existing = yaml.safe_load(output.read_text()) if output.is_file() else {}
-    if existing and not isinstance(existing, dict):
-        raise ValueError('Existing metric profile must be a YAML mapping')
-    existing = existing or {}
-    cache = Path(args.cache_dir or ROOT / 'models/metrics').expanduser().resolve()
-    runtime = {'HF_HOME': os.environ.get('HF_HOME', str(cache / 'huggingface')),
-               'TORCH_HOME': os.environ.get('TORCH_HOME', str(cache / 'torch'))}
-    runtime.update(existing.get('runtime_environment', {}))
-    if args.cache_dir:
-        runtime.update(HF_HOME=str(cache / 'huggingface'), TORCH_HOME=str(cache / 'torch'))
-    envs = {}
+    profile_path = Path(args.profile).expanduser().resolve()
+    if args.init_config:
+        if args.dry_run:
+            print(f'Would copy example to {profile_path}; no changes made.')
+            return 0
+        if profile_path.exists():
+            raise ValueError(f'Profile already exists, edit it manually: {profile_path}')
+        profile_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / 'configs/metrics.offline.example.yaml', profile_path)
+        print(f'Example copied: {profile_path}; edit environment names and local paths before checking.')
+        return 0
+    if not profile_path.is_file():
+        print(f'Profile missing: {profile_path}\nCopy configs/metrics.offline.example.yaml or run --init-config, then edit local paths.\nSee docs/METRIC_SETUP.md')
+        return 0 if args.dry_run else 1
+    from musicbench.workflow import load_metric_profile
+    profile = load_metric_profile(profile_path)
+    overrides = parse_reuse(args.reuse)
+    lyrics = profile.get('metric_options', {}).get('lyrics', {})
+    separation = not args.no_separation and lyrics.get('audio_source', 'demucs') == 'demucs'
+    components = components_for(args.metrics, separation)
+    jobs = []
     for component in components:
-        old_env = existing.get('metric_environments', {}).get('clap_score' if component == 'clap' else component)
-        if component == 'clap' and not old_env:
-            old_env = existing.get('metric_environments', {}).get('fad')
-        if component == 'songeval':
-            old_env = existing.get('metric_options', {}).get('songeval', {}).get('env')
-        if component == 'demucs':
-            old_env = existing.get('metric_options', {}).get('lyrics', {}).get('separation', {}).get('env')
-        envs[component] = reuse.get(component) or old_env or args.env_prefix + component
-    repo = Path(args.songeval_repo or existing.get('metric_options', {}).get('songeval', {}).get('repo') or ROOT / 'third_party/SongEval').expanduser().resolve()
-    defaults = base_profile(metrics, envs, repo, runtime, not args.no_separation)
-    profile = merge_defaults(defaults, existing)
-    profile['runtime_environment'] = runtime
-    # Explicit environment selections override old profile entries; other model options survive reruns.
-    for metric in metrics:
-        component = 'clap' if metric in ('clap_score', 'fad') else metric
-        if metric == 'songeval':
-            profile.setdefault('metric_options', {}).setdefault(metric, {}).update(env=envs[component], repo=str(repo))
-        else:
-            profile.setdefault('metric_environments', {})[metric] = envs[component]
-    if 'lyrics' in metrics:
-        options = profile['metric_options']['lyrics']
-        options['audio_source'] = 'mix' if args.no_separation else 'demucs'
-        if not args.no_separation:
-            options.setdefault('separation', {})['env'] = envs['demucs']
-    if args.whisper_model:
-        profile['metric_options'].setdefault('lyrics', {})['model'] = args.whisper_model
-    print('Selected metrics: ' + ', '.join(metrics))
-    print('Shared cache: ' + str(cache))
-    mode = 'imports' if args.libraries_only else 'check' if args.check_only else 'load'
+        metric = ('clap_score' if 'clap_score' in args.metrics else 'fad') if component == 'clap' else component
+        options = dict(lyrics.get('separation', {})) if component == 'demucs' else dict(profile.get('metric_options', {}).get(metric, {}))
+        env = overrides.get(component) or options.get('env') or profile.get('metric_environments', {}).get(metric)
+        jobs.append((component, env, options))
+        print(f'{component}: env={env or "NOT CONFIGURED"}; local assets={options}')
     if args.dry_run:
-        for component in components:
-            print(f'{component}: environment={envs[component]}; template=envs/{COMPONENTS[component]}; mode={mode}')
-        if 'songeval' in components:
-            print(f'SongEval repo={repo}; clone only if missing (check-only never clones)')
-        print(f'Profile after successful setup: {output}')
+        print('Plan only; no commands executed. No installation or downloading is performed in any mode.')
         return 0
     conda = args.conda
     if not (Path(conda).is_file() or shutil.which(conda)):
-        raise ValueError('conda executable not found; pass --conda /absolute/path/to/conda')
-    info = subprocess.run([conda, 'env', 'list', '--json'], check=True, capture_output=True, text=True)
-    known_paths = {str(Path(p).resolve()) for p in json.loads(info.stdout)['envs']}
-    known_names = {Path(p).name for p in known_paths}
-    logs = ROOT / 'work/metric-setup' / datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+        raise ValueError('conda executable missing; specify --conda /absolute/path/to/conda. See docs/METRIC_SETUP.md')
+    info = subprocess.run([conda, 'env', 'list', '--json'], check=True, capture_output=True, text=True,
+                          env={**os.environ, 'CONDA_OFFLINE': 'true'})
+    paths = {str(Path(p).resolve()) for p in json.loads(info.stdout)['envs']}
+    names = {Path(p).name for p in paths}
+    logs = ROOT / 'work/metric-check' / datetime.now().strftime('%Y%m%d_%H%M%S_%f')
     logs.mkdir(parents=True, exist_ok=False)
-    process_env = os.environ.copy()
-    process_env.update(profile['runtime_environment'])
-    # Installation checks run on CPU and do not compete with generation jobs for CUDA memory.
-    process_env['CUDA_VISIBLE_DEVICES'] = ''
-    if args.check_only:
-        process_env.update(HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1')
-    status = {'mode': mode, 'components': {}, 'profile': str(output)}
-
-    def run(label, command):
-        print(f'[setup] {label}; log={logs / (label + ".log")}', flush=True)
-        with (logs / (label + '.log')).open('w') as handle:
-            subprocess.run(command, env=process_env, stdout=handle, stderr=subprocess.STDOUT,
-                           check=True, timeout=args.timeout)
-
-    for component in components:
-        env = envs[component]
+    process_env = {**os.environ, **profile.get('runtime_environment', {}),
+                   'CUDA_VISIBLE_DEVICES': '', 'HF_HUB_OFFLINE': '1', 'TRANSFORMERS_OFFLINE': '1'}
+    report = {'profile': str(profile_path), 'offline': True, 'mode': 'imports' if args.libraries_only else 'check', 'components': {}}
+    for component, env, options in jobs:
+        result = {'status': 'failed'}
         try:
-            present = str(Path(env).resolve()) in known_paths if os.path.isabs(env) else env in known_names
-            if not present:
-                if args.check_only or component in reuse:
-                    raise ValueError(f'Expected existing environment is missing: {env}')
-                flag = '-p' if os.path.isabs(env) else '-n'
-                run('create-' + component, [conda, 'env', 'create', '-f', str(ROOT / 'envs' / COMPONENTS[component]), flag, env])
-                if os.path.isabs(env):
-                    known_paths.add(str(Path(env).resolve()))
-                else:
-                    known_names.add(env)
-            if component == 'songeval' and mode != 'imports' and not repo.exists():
-                if args.check_only:
-                    raise ValueError(f'SongEval repo missing: {repo}')
-                repo.parent.mkdir(parents=True, exist_ok=True)
-                run('clone-songeval', ['git', 'clone', '--depth', '1', 'https://github.com/ASLP-lab/SongEval.git', str(repo)])
-            request = {'component': component, 'mode': mode, 'repo': str(repo), 'options': {}}
-            if component == 'clap':
-                key = 'clap_score' if 'clap_score' in metrics else 'fad'
-                request['options'] = profile['metric_options'][key]
-            elif component == 'demucs':
-                request['options'] = profile['metric_options']['lyrics'].get('separation', {})
-            else:
-                request['options'] = profile['metric_options'].get(component, {})
-            source, destination = logs / f'{component}-request.json', logs / f'{component}-result.json'
-            source.write_text(json.dumps(request), encoding='utf-8')
-            run('verify-' + component, [*env_args(conda, env), 'python', str(ROOT / 'scripts/prepare_metric.py'),
-                                       '--request', str(source), '--output', str(destination)])
+            if not env or not (str(Path(env).resolve()) in paths if os.path.isabs(env) else env in names):
+                raise ValueError(f'Conda environment missing: {env!r}. Prepare envs/{COMPONENTS[component]} on a connected machine and transfer it; see docs/METRIC_SETUP.md')
+            request = logs / f'{component}-request.json'
+            destination = logs / f'{component}-result.json'
+            request.write_text(json.dumps({'component': component, 'mode': report['mode'], 'options': options}))
+            with (logs / f'{component}.log').open('w') as handle:
+                subprocess.run([*env_args(conda, env), 'python', str(ROOT / 'scripts/prepare_metric.py'),
+                                '--request', str(request), '--output', str(destination)], env=process_env,
+                               stdout=handle, stderr=subprocess.STDOUT, check=True, timeout=args.timeout)
             result = json.loads(destination.read_text())
-            if result.get('status') != 'ready':
-                raise RuntimeError(result.get('reason', 'Readiness check failed'))
-            status['components'][component] = {'status': 'ready', 'env': env, **result}
-            # Whisper and espeak are saved as explicit local paths for later evaluation.
-            if component == 'lyrics':
-                if result.get('model_path'):
-                    profile['metric_options']['lyrics']['model'] = result['model_path']
-                if result.get('espeak_library'):
-                    profile['metric_options']['lyrics'].setdefault('environment', {})['PHONEMIZER_ESPEAK_LIBRARY'] = result['espeak_library']
-        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
-            status['components'][component] = {'status': 'failed', 'env': env, 'reason': str(exc)}
-            print(f'[failed] {component}: {exc}', file=sys.stderr)
-        (logs / 'status.json').write_text(json.dumps(status, indent=2, ensure_ascii=False))
-    failed = [name for name, entry in status['components'].items() if entry['status'] != 'ready']
-    if failed:
-        print('Setup incomplete; existing profile preserved. Failed: ' + ', '.join(failed), file=sys.stderr)
-        print('Logs: ' + str(logs))
-        return 1
-    profile['setup_verification'] = {'mode': mode, 'logs': str(logs), 'components': status['components']}
-    write_yaml(output, profile)
-    print('Metric profile saved: ' + str(output))
-    print('Libraries checked; model weights not verified.' if args.libraries_only else 'Models loaded on CPU; validate CUDA on the actual server during evaluation.')
-    print('Run ./run.sh; the profile supplies evaluator defaults automatically.')
-    return 0
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            result['reason'] = str(exc)
+        result.update(env=env, source=SOURCES[component], tutorial='docs/METRIC_SETUP.md')
+        report['components'][component] = result
+        print(f'[{result["status"]}] {component}: {result.get("reason", "local checks passed")}')
+        if result.get('missing_dependencies'):
+            print('  Missing/broken libraries: ' + ', '.join(result['missing_dependencies']))
+        if result['status'] != 'ready':
+            print(f'  Code: {SOURCES[component]} ; manual setup: docs/METRIC_SETUP.md')
+    report['ready'] = all(v['status'] == 'ready' for v in report['components'].values())
+    (logs / 'status.json').write_text(json.dumps(report, indent=2, ensure_ascii=False))
+    print(f'Diagnostics: {logs}; profile unchanged. No environment, repository or weights installed/downloaded.')
+    return 0 if report['ready'] else 1
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(description='Install metric libraries, download weights, and generate evaluator YAML')
+    p = argparse.ArgumentParser(description='Offline checks only; manually install evaluator libraries and local weights')
+    p.add_argument('--profile', '--output', default=str(ROOT / 'configs/metrics.local.yaml'))
+    p.add_argument('--init-config', action='store_true', help='Copy local-path example without overwriting existing configuration')
     p.add_argument('--metrics', nargs='+', choices=METRICS, default=list(METRICS))
-    p.add_argument('--reuse', action='append', default=[], metavar='COMPONENT=ENV')
+    p.add_argument('--reuse', action='append', default=[])
     p.add_argument('--conda', default=os.environ.get('CONDA_EXE') or os.environ.get('CONDA', 'conda'))
-    p.add_argument('--env-prefix', default='musicbench-eval-')
-    p.add_argument('--cache-dir', help='Shared model cache directory; default: project models/metrics')
-    p.add_argument('--output', default=str(ROOT / 'configs/metrics.local.yaml'))
-    p.add_argument('--songeval-repo')
-    p.add_argument('--whisper-model', help='Whisper size/ID or existing local faster-whisper model directory')
-    p.add_argument('--no-separation', action='store_true', help='Use mixed audio for lyric ASR; do not install Demucs')
-    modes = p.add_mutually_exclusive_group()
-    modes.add_argument('--libraries-only', action='store_true')
-    modes.add_argument('--check-only', action='store_true', help='Offline check; do not create environments or clone repositories')
+    p.add_argument('--libraries-only', action='store_true')
+    p.add_argument('--check-only', action='store_true', help='Compatibility alias; every check is offline')
+    p.add_argument('--no-separation', action='store_true')
     p.add_argument('--dry-run', action='store_true')
     p.add_argument('--timeout', type=int, default=7200)
     args = p.parse_args(argv)

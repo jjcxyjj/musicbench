@@ -2,11 +2,14 @@
 
 交互式、多算法、独立环境的音乐评测框架。当前重点是文生音乐：按任务固定指标规则，根据可用输入自动启用评测，所有算法和评分器串行运行。
 
+离线服务器已有主环境时执行；环境准备和迁移见下方教程。
+
 ```bash
-conda env create -f envs/benchmark.yml
 conda activate musicbench
-pip install -e .
-# 首次运行：准备评分器依赖和模型权重（较大的下载）
+pip install --no-deps --no-build-isolation -e .
+# 离线服务器：先手工准备评分环境和本地模型，见下文教程
+python scripts/setup_metrics.py --init-config
+# 编辑 configs/metrics.local.yaml 后检查
 python scripts/setup_metrics.py
 ./run.sh
 ```
@@ -18,7 +21,7 @@ python scripts/setup_metrics.py
 | 分类 | 指标 | 启用条件 |
 | --- | --- | --- |
 | 美学（含结构） | Audiobox CE/CU/PC/PQ；SongEval 五项 | 所有生成结果；人声自然度仅统计明确有人声的样本 |
-| 歌词匹配 | PER + 中文 CER / 英文 WER，错漏明细 | 有目标歌词 |
+| 歌词匹配 | PER + 中文 CER / 英文 WER，错漏明细 | has_vocal=true 且有目标歌词 |
 | 风格匹配 | CLAP + MuQ-MuLan | 有 style_prompt |
 | 真实音乐分布距离 | FAD（CLAP audio features） | 有真实音乐参考集合 |
 
@@ -43,31 +46,27 @@ python scripts/setup_metrics.py
 
 每次实验保存配置、实际测试清单、参考集合路径、生成音乐、原始分数、识别歌词和错漏明细、评分器版本、子进程日志与完成状态。缺少输入记为不适用；应该执行却缺模型/依赖记为失败。默认保留失败报告并以非零状态退出。
 
-## 一键配置评测库和权重
+## 离线配置评测库和本地模型
 
-`python scripts/setup_metrics.py` 按指标分别创建 conda 环境、下载模型权重并检查模型能否加载。CLAP 与 FAD 共用环境和权重，歌词识别默认先做 Demucs 人声分离。所有安装/检查串行执行。
-
-已有 SongEval 时，在主环境中执行（替换为你的实际环境名和路径）：
+服务器无需联网。评分环境、代码库和权重由你手动准备，模型可放在各自库的 weights 目录；完整教程包含 git clone、依赖模板、目录布局、模型格式和环境迁移：[离线配置教程](docs/METRIC_SETUP.md)。已有 SongEval 直接复用。
 
 ```bash
-python scripts/setup_metrics.py --dry-run
-python scripts/setup_metrics.py \
-  --reuse songeval=your_songeval_env \
-  --songeval-repo /data/SongEval \
-  --cache-dir /data/musicbench-models
-python scripts/setup_metrics.py --check-only
+python scripts/setup_metrics.py --init-config
+# 手工填写 configs/metrics.local.yaml 中的环境与本地权重路径
+python scripts/setup_metrics.py --libraries-only
+python scripts/setup_metrics.py
 ./run.sh text2music
 ```
 
-成功后生成 `configs/metrics.local.yaml`，实验自动读取其中的环境、权重及缓存配置，交互时可继续修改。实验 YAML 的显式配置优先。只装部分指标可使用 `--metrics audiobox songeval clap_score fad`；未安装的指标若被任务启用仍会报失败，应在正式测试前补齐。只安装库使用 `--libraries-only`，离线检查现有库与权重使用 `--check-only`。
+原“一键配库”入口现在只做离线诊断：列出缺少的环境、导入失败的库和模型路径，给出代码来源及教程；不自动安装、克隆或下载，不覆盖配置。所有内置评分器禁止联网，缺本地权重直接报错。CLAP 与 FAD 共用一套模型；MuQ-MuLan 的音频、文本编码器分别配置本地路径。
 
-已有环境只检查，不会被覆盖或自动升级；某项失败会保留日志和原配置。安装检查使用 CPU，服务器 GPU/CUDA 兼容性还需用少量样本确认。完整下载清单、复用环境、离线部署和排错见 [评测库配置流程](docs/METRIC_SETUP.md)。
+检查成功后，评测自动读取环境和模型配置，交互时可以修改。检查加载用 CPU；服务器 CUDA 推理请再用少量样本验证。
 
 ## MusicLite 测试数据
 
 文生音乐默认从 `/data/MusicLite_data/feature` 下各日期的 `5_with_latent.json` 抽样，兼容 JSON 放在日期目录或 audio 子目录。默认按日期随机轮转、每个日期内随机不放回选择，也可选 `pooled` 全库记录等概率抽样。
 
-音频只打包一次，所有算法共用相同测试清单；来源日期、JSON 校验值和抽样统计写入 `dataset/sampling.json`。原始特征、标注和未来新增字段完整保留；新增 lyrics/language 后可以启用歌词指标。详细规则和 YAML 示例见 [输入数据说明](docs/WORKFLOW.md#输入数据)。
+音频只打包一次，所有算法共用相同测试清单；来源日期、JSON 校验值和抽样统计写入 `dataset/sampling.json`。原始特征、标注和未来新增字段完整保留；新增 lyrics/language 后可以启用歌词指标；纯音乐无需 lyrics，人声标注未知的记录不参与歌词评分。详细规则和 YAML 示例见 [输入数据说明](docs/WORKFLOW.md#输入数据)。
 
 ## 环境与算法
 

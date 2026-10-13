@@ -1,0 +1,42 @@
+# Copy to configs/metrics.local.yaml; replace environment names and paths manually.
+# Every path is local. The checker and built-in evaluators never download models.
+version: 1
+runtime_environment:
+  HF_HUB_OFFLINE: '1'
+  TRANSFORMERS_OFFLINE: '1'
+metric_environments:
+  audiobox: musicbench-eval-audiobox
+  clap_score: musicbench-eval-clap
+  fad: musicbench-eval-clap
+  mulan: musicbench-eval-mulan
+  lyrics: musicbench-eval-lyrics
+metric_options:
+  audiobox:
+    checkpoint: /data/musicbench-evaluators/audiobox-aesthetics/weights/checkpoint.pt
+    device: auto
+  songeval:
+    env: your_existing_songeval_env
+    repo: /data/musicbench-evaluators/SongEval
+    muq_model: /data/musicbench-evaluators/MuQ/weights/muq
+    device: auto
+  clap_score:
+    model: /data/musicbench-evaluators/CLAP/weights/clap
+    device: auto
+  fad:
+    model: /data/musicbench-evaluators/CLAP/weights/clap
+    device: auto
+  mulan:
+    model: /data/musicbench-evaluators/MuQ/weights/mulan
+    audio_model: /data/musicbench-evaluators/MuQ/weights/muq
+    text_model: /data/musicbench-evaluators/MuQ/weights/xlm-roberta-base
+    device: auto
+  lyrics:
+    model: /data/musicbench-evaluators/faster-whisper/weights/large-v3
+    language: zh
+    audio_source: demucs
+    device: auto
+    separation:
+      env: musicbench-eval-demucs
+      model: htdemucs
+      repo: /data/musicbench-evaluators/demucs/weights
+      device: auto

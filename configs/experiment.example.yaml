@@ -7,7 +7,7 @@ dataset:
   name: manifest
   path: ../data/inputs.json
   num_samples: 10
-# Explicitly mark inputs; true requires every sampled record to provide the field.
+# Explicit inputs: lyrics=true requires lyrics only for has_vocal=true records; instrumentals are excluded.
 inputs: {style_prompt: true, lyrics: true, reference_audio: false}
 algorithms:
   - name: my_t2m
@@ -31,24 +31,25 @@ metric_environments:
   mulan: mulan
   fad: clap
 metric_options:
-  audiobox: {checkpoint: '', cuda_visible_devices: '0'}
+  audiobox: {checkpoint: /data/musicbench-evaluators/audiobox-aesthetics/weights/checkpoint.pt, cuda_visible_devices: '0'}
   songeval:
     repo: ../third_party/SongEval
     env: songeval
+    muq_model: /data/musicbench-evaluators/MuQ/weights/muq
     cuda_visible_devices: '0'
     device: auto
     timeout: 3600
   lyrics:
-    model: large-v3
+    model: /data/musicbench-evaluators/faster-whisper/weights/large-v3
     language: zh
     device: auto
     cuda_visible_devices: '0'
     beam_size: 5
     audio_source: demucs
-    separation: {env: demucs, device: auto, cuda_visible_devices: '0', model: htdemucs}
-  clap_score: {model: laion/clap-htsat-fused, device: auto, cuda_visible_devices: '0'}
-  mulan: {model: OpenMuQ/MuQ-MuLan-large, device: auto, cuda_visible_devices: '0'}
-  fad: {model: laion/clap-htsat-fused, device: auto, cuda_visible_devices: '0'}
+    separation: {env: demucs, device: auto, cuda_visible_devices: '0', model: htdemucs, repo: /data/musicbench-evaluators/demucs/weights}
+  clap_score: {model: /data/musicbench-evaluators/CLAP/weights/clap, device: auto, cuda_visible_devices: '0'}
+  mulan: {model: /data/musicbench-evaluators/MuQ/weights/mulan, audio_model: /data/musicbench-evaluators/MuQ/weights/muq, text_model: /data/musicbench-evaluators/MuQ/weights/xlm-roberta-base, device: auto, cuda_visible_devices: '0'}
+  fad: {model: /data/musicbench-evaluators/CLAP/weights/clap, device: auto, cuda_visible_devices: '0'}
 # When reference_audio is true:
 # reference_audio: {source: directory, path: /data/real_music, num_samples: 100}
 # Or use the sampled manifest's audio_path values: reference_audio: {source: dataset}

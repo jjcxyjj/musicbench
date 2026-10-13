@@ -28,7 +28,14 @@ def resolve_plan(rules, samples, inputs=None, reference_paths=None):
     plan = {}
     for name, rule in rules.items():
         eligible = list(samples)
+        excluded = []
         reason = None
+        if 'lyrics' in rule.get('requires', []):
+            eligible = [s for s in samples if s.metadata.get('has_vocal') is True]
+            excluded = [{'id': s.id, 'reason': 'instrumental' if s.metadata.get('has_vocal') is False else 'unknown vocal annotation'}
+                        for s in samples if s.metadata.get('has_vocal') is not True]
+            if not eligible:
+                reason = '没有明确标注有人声的样本，歌词指标不适用'
         for condition in rule.get('requires', []):
             if condition == 'reference_audio':
                 if inputs.get(condition) is False or not reference_paths:
@@ -39,12 +46,16 @@ def resolve_plan(rules, samples, inputs=None, reference_paths=None):
                     eligible = []
                     reason = f'未提供 {condition}'
                 else:
+                    expected = len(eligible)
+                    if condition == 'lyrics':
+                        excluded += [{'id': s.id, 'reason': 'target lyrics missing'} for s in eligible
+                                     if not str(s.metadata.get(condition) or '').strip()]
                     eligible = [s for s in eligible if str(s.metadata.get(condition) or '').strip()]
-                    if inputs.get(condition) is True and len(eligible) != len(samples):
+                    if inputs.get(condition) is True and len(eligible) != expected:
                         raise ValueError(f'Declared {condition} is missing for one or more samples')
-                    if not eligible:
+                    if not eligible and reason is None:
                         reason = f'未提供 {condition}'
         plan[name] = {'category': rule.get('category', 'other'),
                       'status': 'scheduled' if eligible else 'not_applicable',
-                      'eligible_ids': [s.id for s in eligible], 'reason': reason}
+                      'eligible_ids': [s.id for s in eligible], 'excluded': excluded, 'reason': reason}
     return plan
