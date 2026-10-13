@@ -1,0 +1,43 @@
+# Run everything in the already activated songeval environment.
+# Start with the two atomic capabilities you have; enable the others one at a time.
+device: auto
+enabled_metrics: [songeval, audiobox]
+
+songeval:
+  repo: songeval/upstream
+  muq_model: MuQ/weights/muq
+
+audiobox:
+  checkpoint: audiobox-aesthetics/weights/checkpoint.pt
+
+muq_mulan:
+  model: MuQ/weights/mulan
+  audio_model: MuQ/weights/muq
+  text_model: MuQ/weights/xlm-roberta-base
+
+clap:
+  model: CLAP/weights/clap
+
+# Default protocol stays FAD-CLAP. Reuses the CLAP audio model above.
+fad:
+  embedding: clap
+  model: CLAP/weights/clap
+
+# Audio-only ASR + phoneme/character/word error rates; no target prompt.
+per:
+  model: PER/weights/large-v3
+  language: zh
+  beam_size: 5
+  # espeak_library: /path/to/libespeak-ng.so
+
+# Two annotation models, unrelated to internal ACE LM PMI/DiT scoring.
+ace_captioner:
+  model: ACE/acestep-captioner/weights
+  device_map: auto
+  max_new_tokens: 2048
+
+ace_transcriber:
+  model: ACE/acestep-transcriber/weights
+  device_map: auto
+  max_new_tokens: 2048
+  language: zh

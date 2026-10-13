@@ -1,0 +1,180 @@
+# MusicBench
+
+交互式、多算法的音乐评测框架。算法使用各自环境，评分器默认共用一个环境。当前重点是文生音乐：按任务固定指标规则，根据可用输入自动启用评测，所有算法和评分器串行运行。
+
+离线服务器已有主环境时执行；环境准备和迁移见下方教程。
+
+```bash
+conda activate musicbench
+pip install --no-deps --no-build-isolation -e .
+# 离线服务器：先手工准备评分环境和本地模型，见下文教程
+python scripts/setup_metrics.py --init-config --shared-env songeval
+# 编辑 configs/metrics.local.yaml 后检查
+python scripts/setup_metrics.py
+./run.sh
+```
+
+已激活评测主环境时可用 `BENCH_ENV=current ./run.sh`。完整配置示例见 [experiment.example.yaml](configs/experiment.example.yaml)，使用、数据格式、环境准备和扩展方法见 [工作流文档](docs/WORKFLOW.md)。
+
+## 文生音乐主指标
+
+| 分类 | 指标 | 启用条件 |
+| --- | --- | --- |
+| 美学（含结构） | Audiobox CE/CU/PC/PQ；SongEval 五项 | 所有生成结果；人声自然度仅统计明确有人声的样本 |
+| 歌词匹配 | PER + 中文 CER / 英文 WER，错漏明细 | has_vocal=true 且有目标歌词 |
+| 风格匹配 | CLAP + MuQ-MuLan | 有 style_prompt |
+| 真实音乐分布距离 | FAD（CLAP audio features） | 有真实音乐参考集合 |
+
+结果按分类展示，不计算综合质量总分。PC 是复杂程度描述，不默认越高越好。自动分数不等于人工听评，也不声称替代 ACE 论文的专有奖励分数。
+
+## 流程
+
+![MusicBench 总体流程](workflow_overview.jpg)
+
+![文生音乐自动评测流程](text2music_evaluation.jpg)
+
+两张 JPG 均保存在项目根目录。更新流程后可运行 `python scripts/render_workflow_diagrams.py` 重新导出；Linux 可通过 `--font /path/to/NotoSansCJK-Regular.ttc` 指定中文字体。
+
+
+任务 → 确认输入 → 选择算法和环境/显卡 → 设置算法及测试参数 → 保存 YAML → 随机抽样 → 算法 A 推理与评测 → 算法 B 推理与评测 → 分类图片和分析报告。
+
+```bash
+./run.sh text2music
+./run.sh --dry-run --save-config configs/my-experiment.yaml
+./run.sh --config configs/my-experiment.yaml --output runs/experiment-01
+```
+
+每次实验保存配置、实际测试清单、参考集合路径、生成音乐、原始分数、识别歌词和错漏明细、评分器版本、子进程日志与完成状态。缺少输入记为不适用；应该执行却缺模型/依赖记为失败。默认保留失败报告并以非零状态退出。
+
+## 离线配置评测库和本地模型
+
+服务器无需联网。优先复用你已跑通的 SongEval 环境，也可用 musicbench；只需在 YAML 中填写 `evaluation_environment: 你的环境名`。评分库、代码和权重由你手动准备，模型可放在各自库的 weights 目录；完整教程包含 git clone、依赖模板、目录布局、模型格式和环境迁移：[离线配置教程](docs/METRIC_SETUP.md)。已有 SongEval 直接复用，个别指标只有依赖冲突时才拆环境。
+
+```bash
+python scripts/setup_metrics.py --init-config --shared-env songeval
+# 手工填写 configs/metrics.local.yaml 中的环境与本地权重路径
+python scripts/setup_metrics.py --libraries-only
+python scripts/setup_metrics.py
+./run.sh text2music
+```
+
+原“一键配库”入口现在只做离线诊断：列出缺少的环境、导入失败的库和模型路径，给出代码来源及教程；不自动安装、克隆或下载，不覆盖配置。所有内置评分器禁止联网，缺本地权重直接报错。CLAP 与 FAD 共用一套模型；MuQ-MuLan 的音频、文本编码器分别配置本地路径。
+
+检查成功后，评测自动读取环境和模型配置，交互时可以修改。检查加载用 CPU；服务器 CUDA 推理请再用少量样本验证。
+
+## MusicLite 测试数据
+
+文生音乐默认从 `/data/MusicLite_data/feature` 下各日期的 `5_with_latent.json` 抽样，兼容 JSON 放在日期目录或 audio 子目录。默认按日期随机轮转、每个日期内随机不放回选择，也可选 `pooled` 全库记录等概率抽样。
+
+音频只打包一次，所有算法共用相同测试清单；来源日期、JSON 校验值和抽样统计写入 `dataset/sampling.json`。原始特征、标注和未来新增字段完整保留；新增 lyrics/language 后可以启用歌词指标；纯音乐无需 lyrics，人声标注未知的记录不参与歌词评分。详细规则和 YAML 示例见 [输入数据说明](docs/WORKFLOW.md#输入数据)。
+
+## 环境与算法
+
+主环境负责配置、数据和报告，各生成算法保留自己的环境，所有评分器默认共用一套环境，通过 `conda run` 串行启动，不需要手动反复 activate。只有实际依赖冲突时才为个别评分器拆环境。现有 SongEval 仓库与环境可直接通过 YAML 指定，详见 [SongEval 接入](docs/SONGEVAL.md)。
+
+算法在 `algorithms/<name>/config.yaml` 声明 task、env、infer_script 和 parameter_schema。推理脚本只需接收 `--manifest`、`--output`，通过 JSON/JSONL 交换数据，不要求安装 MusicBench。`my_t2m` 是正弦音模板，`t2m_passthrough` 复制参考音频，两者仅用于流程调试，接真实模型后再做算法比较。
+
+任务和指标通过注册表及 YAML 扩展。另保留节拍跟踪、音乐标签任务和原有单模型 `musicbench run/evaluate/report` 命令；旧命令不承担新的多环境编排，历史指标配置保留兼容。
+
+## 新增音乐生成算法
+
+支持登记已有适配脚本，也支持生成适配模板。登记完成后，`./run.sh` 会在对应任务下自动显示新算法，不需要修改评测主流程。命令在已安装本项目的主环境中执行；算法依赖和模型权重在算法自己的环境中准备。
+
+### 方式一：交互式登记
+
+```bash
+python -m musicbench.algorithms add
+```
+
+依次填写算法名称、任务、已有 conda 环境、显卡编号；已有适配脚本则填写脚本与工作目录，没有则留空创建模板。也可用安装后的 `musicbench-algorithms add`。
+
+### 方式二：创建新算法模板
+
+```bash
+python -m musicbench.algorithms add \
+  --name new_generator --task text2music --env new_generator_env --gpu 0
+```
+
+生成 `algorithms/new_generator/config.yaml`、`infer.py` 和接入说明。在 infer.py 的 **load_model()** 和 **generate()** 两个函数中接入真实模型。模板在完成接入前会明确报错，不会生成假结果。默认模板面向文生音乐；其他任务需提供自己的适配脚本。
+
+`generate(model, sample, args)` 返回 `(音频数组, 采样率)`，音频数组约定为单声道 `[时间]` 或多声道 `[时间, 声道]`。模型返回 `[声道, 时间]`、GPU Tensor 等格式时，请在适配函数里转为 CPU NumPy 并调整维度。模板通过 soundfile 保存 WAV，算法环境需要安装 `soundfile`。
+
+### 方式三：登记已有算法项目中的适配脚本
+
+```bash
+python -m musicbench.algorithms add \
+  --name ace_step --task text2music --env ace_step_env --gpu 0 \
+  --script /data/musicbench_adapters/ace_infer.py \
+  --cwd /data/ACE-Step-1.5 \
+  --schema /data/musicbench_adapters/ace_parameters.yaml
+```
+
+脚本可以保留在外部算法目录，无需复制权重或整个仓库。cwd 是运行工作目录，infer_script 是适配脚本路径；运行时会使用登记的工作目录并让它能被 Python 导入。**原算法脚本必须满足下面的输入输出契约，否则需要先编写一层适配。** 此示例只是登记方式，不代表已经提供 ACE 模型的专用实现。
+
+### 声明测试时要询问的算法参数
+
+`--schema` 读取一个 YAML 参数定义映射。也可直接编辑 `algorithms/<name>/config.yaml` 中的 parameter_schema，例如：
+
+```yaml
+name: ace_step
+task: text2music
+env: ace_step_env
+cuda_visible_devices: '0'
+cwd: /data/ACE-Step-1.5
+infer_script: /data/musicbench_adapters/ace_infer.py
+parameter_schema:
+  checkpoint:
+    flag: --checkpoint
+    type: path
+    label: 模型权重路径
+    required: true
+  steps: {flag: --steps, type: int, minimum: 1, default: 30, label: 采样步数}
+  guidance: {flag: --guidance, type: float, default: 3.0, label: 引导强度}
+  duration: {flag: --duration, type: float, minimum: 0.1, default: 30, label: 生成时长（秒）}
+parameters: {}
+args: []
+```
+
+交互会按定义逐项提问，将值写进实验 YAML，并转换为对应命令行参数。flag 必须与适配脚本实际支持的参数一致；类型支持 str/int/float/path/bool，bool 为真时只传 flag。`--manifest` 和 `--output` 由框架提供，不能在参数定义中覆盖。相对 cwd 以算法 config.yaml 所在目录解析，infer_script 以 cwd 解析；权重建议填绝对路径。
+
+若没有 parameter_schema，主交互会询问额外命令行参数，并保存为 args 列表。不同算法可以定义不同参数，不必强行统一参数名。
+
+### 推理适配脚本的输入输出契约
+
+程序在该算法环境中执行：
+
+```bash
+python /path/to/adapter.py --manifest /abs/manifest.json --output /abs/predictions.jsonl
+```
+
+输入 manifest 是 JSON 数组，样本如下。style_prompt 和 lyrics 分开传给生成模型；audio_path 可以为空。
+
+```json
+[{"id":"sample-1","audio_path":"","metadata":{"style_prompt":"acoustic pop, female vocals","lyrics":"你好世界","language":"zh","has_vocal":true,"generation_seed":42}}]
+```
+
+输出 predictions.jsonl 每行对应一个输入 ID，全部样本必须有唯一且匹配的输出：
+
+```json
+{"id":"sample-1","output":{"audio_path":"/abs/generated/sample-1.wav"}}
+```
+
+生成音乐必须确实存在；推荐绝对音频路径，相对路径以 predictions.jsonl 所在目录解析。不要在推理脚本中自行抽取另一批测试数据。每条输入的 generation_seed 供算法设置随机种子，重复生成时框架会创建不同 ID 与种子。
+
+### 查看、检查并开始评测
+
+```bash
+python -m musicbench.algorithms list --task text2music
+./run.sh text2music --dry-run --save-config configs/new-experiment.yaml
+./run.sh --config configs/new-experiment.yaml
+```
+
+先通过 `--dry-run` 保存和检查参数，再正式运行。dry-run 不加载模型，也不验证生成质量。登记命令不会覆盖同名算法，修改已有算法时显式编辑其配置即可。新算法通过 JSON 契约接入，不要求在其环境安装 MusicBench。
+
+## 验证
+
+```bash
+pytest -q
+```
+
+测试使用短音频、数学样例和外部评分器接口替身，不下载大模型。真实评分需要配置相应环境与权重。

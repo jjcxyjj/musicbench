@@ -10,3 +10,9 @@ configs/experiment.local.yaml
 
 models/
 configs/metrics.local.yaml
+
+results/
+*/upstream/
+*/weights/
+legacy/work/
+legacy/configs/*.local.yaml

@@ -1,180 +1,133 @@
-# MusicBench
+# MusicBench：只评测已有音频
 
-交互式、多算法的音乐评测框架。算法使用各自环境，评分器默认共用一个环境。当前重点是文生音乐：按任务固定指标规则，根据可用输入自动启用评测，所有算法和评分器串行运行。
+现在只做一件事：**在已激活的 songeval 环境中，读取算法输出音频与 JSON 标注，选择评分能力，保存分数、图片和报告。** 不运行生成算法，不切换 conda 环境，不随机抽数据，不自动安装或下载模型。
 
-离线服务器已有主环境时执行；环境准备和迁移见下方教程。
+## 代码放在哪里
+
+```text
+main.py                     # 读 JSON → 问可用输入 → 逐项评分
+shared.py                   # 本地模型加载和分数汇总的小工具
+config.yaml                 # 启用哪些能力、各自的本地模型路径
+songeval/score.py            # 音频 → 五维美学评分
+songeval/upstream/           # 你已有的 SongEval 仓库，也可在配置里填外部路径
+audiobox-aesthetics/score.py # 音频 → CE/CU/PC/PQ
+MuQ/score.py           # 音频 + 风格文本 → 相似度
+CLAP/score.py                # 音频 + 风格文本 → CLAP 相似度
+PER/score.py                 # ASR → PER / CER / WER
+FAD/score.py                 # 生成集合 + GT 集合 → 分布距离
+ACE/score.py                 # captioner 音乐描述 / transcriber 歌词识别
+reporting/write.py          # CSV、JPG、Markdown 报告
+examples/input.example.json # 输入示例
+legacy/                     # 之前的复杂编排代码，仅归档，新入口不调用
+```
+
+各能力只有一个 `evaluate(rows, options, references)` 函数。代码库可放到对应目录的 upstream，权重放在 weights，也可在 config.yaml 填你已经跑通的外部绝对路径。不用把上游代码复制进评分文件。
+
+## 第一步：先用已有的 SongEval 和 Audiobox
 
 ```bash
-conda activate musicbench
-pip install --no-deps --no-build-isolation -e .
-# 离线服务器：先手工准备评分环境和本地模型，见下文教程
-python scripts/setup_metrics.py --init-config --shared-env songeval
-# 编辑 configs/metrics.local.yaml 后检查
-python scripts/setup_metrics.py
-./run.sh
+conda activate songeval   # 替换成你的实际环境名，只激活这一次
+python main.py --input /data/generated/results.json
 ```
 
-已激活评测主环境时可用 `BENCH_ENV=current ./run.sh`。完整配置示例见 [experiment.example.yaml](configs/experiment.example.yaml)，使用、数据格式、环境准备和扩展方法见 [工作流文档](docs/WORKFLOW.md)。
+启动后会问：有没有目标歌词、GT/真实参考音频、风格描述。算法输出音频必须有。默认只运行 `enabled_metrics: [songeval, audiobox]`；其他能力会标为未启用，配好一个再把它的名字加进去。
 
-## 文生音乐主指标
+模型路径在 config.yaml 改；不再为每个指标填环境名。所有能力在当前进程依次调用，每项结束后清理未引用对象与 CUDA 缓存。没有新的算法推理进程或 conda 子进程。
 
-| 分类 | 指标 | 启用条件 |
-| --- | --- | --- |
-| 美学（含结构） | Audiobox CE/CU/PC/PQ；SongEval 五项 | 所有生成结果；人声自然度仅统计明确有人声的样本 |
-| 歌词匹配 | PER + 中文 CER / 英文 WER，错漏明细 | has_vocal=true 且有目标歌词 |
-| 风格匹配 | CLAP + MuQ-MuLan | 有 style_prompt |
-| 真实音乐分布距离 | FAD（CLAP audio features） | 有真实音乐参考集合 |
-
-结果按分类展示，不计算综合质量总分。PC 是复杂程度描述，不默认越高越好。自动分数不等于人工听评，也不声称替代 ACE 论文的专有奖励分数。
-
-## 流程
-
-![MusicBench 总体流程](workflow_overview.jpg)
-
-![文生音乐自动评测流程](text2music_evaluation.jpg)
-
-两张 JPG 均保存在项目根目录。更新流程后可运行 `python scripts/render_workflow_diagrams.py` 重新导出；Linux 可通过 `--font /path/to/NotoSansCJK-Regular.ttc` 指定中文字体。
-
-
-任务 → 确认输入 → 选择算法和环境/显卡 → 设置算法及测试参数 → 保存 YAML → 随机抽样 → 算法 A 推理与评测 → 算法 B 推理与评测 → 分类图片和分析报告。
+检查输入与计划但不加载模型：
 
 ```bash
-./run.sh text2music
-./run.sh --dry-run --save-config configs/my-experiment.yaml
-./run.sh --config configs/my-experiment.yaml --output runs/experiment-01
+python main.py --input /data/generated/results.json --plan-only
 ```
 
-每次实验保存配置、实际测试清单、参考集合路径、生成音乐、原始分数、识别歌词和错漏明细、评分器版本、子进程日志与完成状态。缺少输入记为不适用；应该执行却缺模型/依赖记为失败。默认保留失败报告并以非零状态退出。
-
-## 离线配置评测库和本地模型
-
-服务器无需联网。优先复用你已跑通的 SongEval 环境，也可用 musicbench；只需在 YAML 中填写 `evaluation_environment: 你的环境名`。评分库、代码和权重由你手动准备，模型可放在各自库的 weights 目录；完整教程包含 git clone、依赖模板、目录布局、模型格式和环境迁移：[离线配置教程](docs/METRIC_SETUP.md)。已有 SongEval 直接复用，个别指标只有依赖冲突时才拆环境。
-
-```bash
-python scripts/setup_metrics.py --init-config --shared-env songeval
-# 手工填写 configs/metrics.local.yaml 中的环境与本地权重路径
-python scripts/setup_metrics.py --libraries-only
-python scripts/setup_metrics.py
-./run.sh text2music
-```
-
-原“一键配库”入口现在只做离线诊断：列出缺少的环境、导入失败的库和模型路径，给出代码来源及教程；不自动安装、克隆或下载，不覆盖配置。所有内置评分器禁止联网，缺本地权重直接报错。CLAP 与 FAD 共用一套模型；MuQ-MuLan 的音频、文本编码器分别配置本地路径。
-
-检查成功后，评测自动读取环境和模型配置，交互时可以修改。检查加载用 CPU；服务器 CUDA 推理请再用少量样本验证。
-
-## MusicLite 测试数据
-
-文生音乐默认从 `/data/MusicLite_data/feature` 下各日期的 `5_with_latent.json` 抽样，兼容 JSON 放在日期目录或 audio 子目录。默认按日期随机轮转、每个日期内随机不放回选择，也可选 `pooled` 全库记录等概率抽样。
-
-音频只打包一次，所有算法共用相同测试清单；来源日期、JSON 校验值和抽样统计写入 `dataset/sampling.json`。原始特征、标注和未来新增字段完整保留；新增 lyrics/language 后可以启用歌词指标；纯音乐无需 lyrics，人声标注未知的记录不参与歌词评分。详细规则和 YAML 示例见 [输入数据说明](docs/WORKFLOW.md#输入数据)。
-
-## 环境与算法
-
-主环境负责配置、数据和报告，各生成算法保留自己的环境，所有评分器默认共用一套环境，通过 `conda run` 串行启动，不需要手动反复 activate。只有实际依赖冲突时才为个别评分器拆环境。现有 SongEval 仓库与环境可直接通过 YAML 指定，详见 [SongEval 接入](docs/SONGEVAL.md)。
-
-算法在 `algorithms/<name>/config.yaml` 声明 task、env、infer_script 和 parameter_schema。推理脚本只需接收 `--manifest`、`--output`，通过 JSON/JSONL 交换数据，不要求安装 MusicBench。`my_t2m` 是正弦音模板，`t2m_passthrough` 复制参考音频，两者仅用于流程调试，接真实模型后再做算法比较。
-
-任务和指标通过注册表及 YAML 扩展。另保留节拍跟踪、音乐标签任务和原有单模型 `musicbench run/evaluate/report` 命令；旧命令不承担新的多环境编排，历史指标配置保留兼容。
-
-## 新增音乐生成算法
-
-支持登记已有适配脚本，也支持生成适配模板。登记完成后，`./run.sh` 会在对应任务下自动显示新算法，不需要修改评测主流程。命令在已安装本项目的主环境中执行；算法依赖和模型权重在算法自己的环境中准备。
-
-### 方式一：交互式登记
-
-```bash
-python -m musicbench.algorithms add
-```
-
-依次填写算法名称、任务、已有 conda 环境、显卡编号；已有适配脚本则填写脚本与工作目录，没有则留空创建模板。也可用安装后的 `musicbench-algorithms add`。
-
-### 方式二：创建新算法模板
-
-```bash
-python -m musicbench.algorithms add \
-  --name new_generator --task text2music --env new_generator_env --gpu 0
-```
-
-生成 `algorithms/new_generator/config.yaml`、`infer.py` 和接入说明。在 infer.py 的 **load_model()** 和 **generate()** 两个函数中接入真实模型。模板在完成接入前会明确报错，不会生成假结果。默认模板面向文生音乐；其他任务需提供自己的适配脚本。
-
-`generate(model, sample, args)` 返回 `(音频数组, 采样率)`，音频数组约定为单声道 `[时间]` 或多声道 `[时间, 声道]`。模型返回 `[声道, 时间]`、GPU Tensor 等格式时，请在适配函数里转为 CPU NumPy 并调整维度。模板通过 soundfile 保存 WAV，算法环境需要安装 `soundfile`。
-
-### 方式三：登记已有算法项目中的适配脚本
-
-```bash
-python -m musicbench.algorithms add \
-  --name ace_step --task text2music --env ace_step_env --gpu 0 \
-  --script /data/musicbench_adapters/ace_infer.py \
-  --cwd /data/ACE-Step-1.5 \
-  --schema /data/musicbench_adapters/ace_parameters.yaml
-```
-
-脚本可以保留在外部算法目录，无需复制权重或整个仓库。cwd 是运行工作目录，infer_script 是适配脚本路径；运行时会使用登记的工作目录并让它能被 Python 导入。**原算法脚本必须满足下面的输入输出契约，否则需要先编写一层适配。** 此示例只是登记方式，不代表已经提供 ACE 模型的专用实现。
-
-### 声明测试时要询问的算法参数
-
-`--schema` 读取一个 YAML 参数定义映射。也可直接编辑 `algorithms/<name>/config.yaml` 中的 parameter_schema，例如：
-
-```yaml
-name: ace_step
-task: text2music
-env: ace_step_env
-cuda_visible_devices: '0'
-cwd: /data/ACE-Step-1.5
-infer_script: /data/musicbench_adapters/ace_infer.py
-parameter_schema:
-  checkpoint:
-    flag: --checkpoint
-    type: path
-    label: 模型权重路径
-    required: true
-  steps: {flag: --steps, type: int, minimum: 1, default: 30, label: 采样步数}
-  guidance: {flag: --guidance, type: float, default: 3.0, label: 引导强度}
-  duration: {flag: --duration, type: float, minimum: 0.1, default: 30, label: 生成时长（秒）}
-parameters: {}
-args: []
-```
-
-交互会按定义逐项提问，将值写进实验 YAML，并转换为对应命令行参数。flag 必须与适配脚本实际支持的参数一致；类型支持 str/int/float/path/bool，bool 为真时只传 flag。`--manifest` 和 `--output` 由框架提供，不能在参数定义中覆盖。相对 cwd 以算法 config.yaml 所在目录解析，infer_script 以 cwd 解析；权重建议填绝对路径。
-
-若没有 parameter_schema，主交互会询问额外命令行参数，并保存为 args 列表。不同算法可以定义不同参数，不必强行统一参数名。
-
-### 推理适配脚本的输入输出契约
-
-程序在该算法环境中执行：
-
-```bash
-python /path/to/adapter.py --manifest /abs/manifest.json --output /abs/predictions.jsonl
-```
-
-输入 manifest 是 JSON 数组，样本如下。style_prompt 和 lyrics 分开传给生成模型；audio_path 可以为空。
+## JSON 怎么写
 
 ```json
-[{"id":"sample-1","audio_path":"","metadata":{"style_prompt":"acoustic pop, female vocals","lyrics":"你好世界","language":"zh","has_vocal":true,"generation_seed":42}}]
+[
+  {
+    "id": "song-1",
+    "algorithm": "ace",
+    "audio_path": "/data/generated/ace/song-1.wav",
+    "has_vocal": true,
+    "lyrics": "春风吹过山岗",
+    "language": "zh",
+    "style_prompt": "国风流行，钢琴与古筝，女声",
+    "gt_audio_path": "/data/reference/song-1.wav"
+  },
+  {
+    "id": "song-2",
+    "algorithm": "ace",
+    "audio_path": "/data/generated/ace/song-2.wav",
+    "has_vocal": false,
+    "style_prompt": "舒缓的古筝独奏",
+    "gt_audio_path": "/data/reference/song-2.wav"
+  }
+]
 ```
 
-输出 predictions.jsonl 每行对应一个输入 ID，全部样本必须有唯一且匹配的输出：
+- `audio_path`（或 generated_audio_path）必须指向**算法实际输出音频**。MusicLite 的原始 `path` 不自动当成生成结果，避免误评原始音频。
+- 风格兼容 `style_prompt` / `Qwen_caption` / `caption`，不把描述当成歌词。
+- `has_vocal: false` 的纯音乐不需要 lyrics。歌词评分只选 has_vocal=true 且有目标歌词的记录；未知人声标注或缺歌词的记录不参与歌词评分，仍参与美学评估。
+- GT 兼容 gt_audio_path / path_original；也支持 `{"samples": [...], "reference_audio": ["a.wav", "b.wav"]}` 提供统一参考集合。选择有 GT 而 JSON 没有路径时，会问 GT 目录。
+- algorithm 用于按算法分组比较，不启动该算法；不填则统一叫 generated。同一算法内 ID 必须唯一。
+- 相对音频路径以输入 JSON 所在目录为基准；配置里的相对模型路径以 config.yaml 所在目录为基准。
+- 原有或未来增加的标注会保留在 metadata 中。
 
-```json
-{"id":"sample-1","output":{"audio_path":"/abs/generated/sample-1.wav"}}
-```
+## 输入决定哪些指标适用
 
-生成音乐必须确实存在；推荐绝对音频路径，相对路径以 predictions.jsonl 所在目录解析。不要在推理脚本中自行抽取另一批测试数据。每条输入的 generation_seed 供算法设置随机种子，重复生成时框架会创建不同 ID 与种子。
+| 能力 | 适用输入 | 是否默认启用 |
+|---|---|---|
+| SongEval | 算法输出音频 | 是 |
+| Audiobox | 算法输出音频 | 是 |
+| MuQ-MuLan | 算法输出音频 + 风格描述 | 配好后启用 muq_mulan |
+| FAD | 每个算法的输出集合 + 真实参考集合 | 配好后启用 fad |
+| CLAP | 算法输出音频 + 风格描述 | 配好后启用 clap |
+| PER（Whisper） | 有人声 + 目标歌词 | 配好后启用 per |
+| ACE captioner | 算法输出音频 → 音乐描述，不产生匹配分数 | 配好后启用 ace_captioner |
+| ACE transcriber | 有人声 + 目标歌词 → PER/CER/WER | 配好后启用 ace_transcriber |
 
-### 查看、检查并开始评测
+例如配好 MuQ 后修改 `enabled_metrics: [songeval, audiobox, muq_mulan, fad]`。也可临时 `python main.py --input results.json --metrics songeval audiobox`。
+
+FAD 至少需要各两条生成/参考音频；样本过少仍不稳定。默认使用 **FAD-CLAP**。可设置 fad.embedding: muq_mulan 并在 fad 中填 MuQ-MuLan 的 model/audio_model/text_model 使用另一编码器。不同编码器、权重、预处理和参考集合的 FAD 不可直接比较。
+
+## 各库仓库与本地模型
+
+| 项目 | 官方仓库 | 本地模型 |
+|---|---|---|
+| SongEval | https://github.com/ASLP-lab/SongEval | 仓库 ckpt/model.safetensors + MuQ-large-msd-iter |
+| Audiobox | https://github.com/facebookresearch/audiobox-aesthetics | checkpoint.pt |
+| MuQ / MuQ-MuLan | https://github.com/tencent-ailab/MuQ | MuQ-MuLan-large + MuQ-large-msd-iter + xlm-roberta-base |
+| FAD 工具参考 | https://github.com/microsoft/fadtk | FAD 是统计计算，默认复用 CLAP 特征，自行计算 Fréchet 距离，不额外依赖 fadtk |
+| CLAP | https://github.com/LAION-AI/CLAP | 完整 Transformers 格式 CLAP |
+| PER | https://github.com/SYSTRAN/faster-whisper | CTranslate2 格式 Whisper；中文 pypinyin / 英文 phonemizer |
+| ACE 两个标注模型 | https://github.com/QwenLM/Qwen2.5-Omni | 各自完整的 captioner / transcriber 模型 |
+
+联网准备机可执行以下命令，之后复制到服务器；服务器不运行下载命令：
 
 ```bash
-python -m musicbench.algorithms list --task text2music
-./run.sh text2music --dry-run --save-config configs/new-experiment.yaml
-./run.sh --config configs/new-experiment.yaml
+git clone https://github.com/ASLP-lab/SongEval.git songeval/upstream
+git clone https://github.com/facebookresearch/audiobox-aesthetics.git audiobox-aesthetics/upstream
+git clone https://github.com/tencent-ailab/MuQ.git MuQ/upstream
+git clone https://github.com/microsoft/fadtk.git FAD/upstream
+git clone https://github.com/LAION-AI/CLAP.git CLAP/upstream
+git clone https://github.com/SYSTRAN/faster-whisper.git PER/upstream
+git clone https://github.com/QwenLM/Qwen2.5-Omni.git ACE/upstream
 ```
 
-先通过 `--dry-run` 保存和检查参数，再正式运行。dry-run 不加载模型，也不验证生成质量。登记命令不会覆盖同名算法，修改已有算法时显式编辑其配置即可。新算法通过 JSON 契约接入，不要求在其环境安装 MusicBench。
+已有仓库不用克隆，把 config.yaml 的 repo 改成原路径即可。git clone 不保证包含权重；模型目录、分词器和权重文件需你手工准备。MuQ-MuLan 的音频/文本编码器分别填写 audio_model/text_model，本地目录名保留 muq / xlm-roberta 字样。
 
-## 验证
+Audiobox 非 Hugging Face 官方权重地址：`https://dl.fbaipublicfiles.com/audiobox-aesthetics/checkpoint.pt`。在联网机器下载，再放入 audiobox-aesthetics/weights/checkpoint.pt。
 
-```bash
-pytest -q
-```
+所有依赖在同一个 songeval 环境里手工配置。新入口只需 PyYAML；报告还需要 matplotlib；各 score.py 的第三方 import 就是该能力需要的库。已有 SongEval/Audiobox 不必重装。其他库可在同系统联网机器准备 wheelhouse，服务器用 `python -m pip install --no-index --find-links /data/wheelhouse 包名` 补齐。不会自动创建环境或更新版本。
 
-测试使用短音频、数学样例和外部评分器接口替身，不下载大模型。真实评分需要配置相应环境与权重。
+## ACE 两个模型怎么运行
+
+已拆成 ACE/acestep-captioner/run.py 和 ACE/acestep-transcriber/run.py，公用 ACE/inference.py，读取本地权重。官方没有在模型卡提供独立 GitHub 运行项目，而是明确沿用 Qwen2.5-Omni-7B 的加载与推理方式。
+
+详见 [ACE 教程](ACE/README.md)，包含官方模型页、代码仓库、离线依赖和单音频命令。Captioner 输出描述，不充当风格匹配评分；Transcriber 从音频识别歌词，再通过 [PER 协议](PER/README.md) 计算错误率。它们不是 ACE 内部 LM PMI / DiT 注意力评分；旧 PMI 实验文件保留但不再由 main.py 调用。
+
+## 输出
+
+每次实验写入独立 results/时间目录：input.json、config.yaml、scores.json、scores.csv、每项可用指标的 JPG 和 report.md。部分能力失败会保留其他结果并非零退出；不适用、尚未启用分别标明。所有分数分项展示，不计算综合排名。
+
+总体流程和文生音乐评测图保存在根目录的 workflow_overview.jpg、text2music_evaluation.jpg。旧代码已归档到 legacy，本 README 描述的是新的 main.py 入口。

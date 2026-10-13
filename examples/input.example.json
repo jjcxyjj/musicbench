@@ -1,0 +1,20 @@
+[
+  {
+    "id": "song-1",
+    "algorithm": "ace",
+    "audio_path": "/data/generated/ace/song-1.wav",
+    "has_vocal": true,
+    "lyrics": "春风吹过山岗",
+    "language": "zh",
+    "style_prompt": "Guofeng pop, female vocals",
+    "gt_audio_path": "/data/reference/song-1.wav"
+  },
+  {
+    "id": "song-2",
+    "algorithm": "ace",
+    "audio_path": "/data/generated/ace/song-2.wav",
+    "has_vocal": false,
+    "style_prompt": "Instrumental guzheng solo",
+    "gt_audio_path": "/data/reference/song-2.wav"
+  }
+]
