@@ -35,6 +35,8 @@ def load_metric_profile(path):
     data = read_yaml(path)
     profile = {key: copy.deepcopy(data.get(key, {})) for key in
                ('runtime_environment', 'metric_environments', 'metric_options')}
+    if data.get('evaluation_environment'):
+        profile['evaluation_environment'] = data['evaluation_environment']
     for key, value in profile['runtime_environment'].items():
         if not isinstance(value, str):
             raise ValueError(f'Runtime environment variable {key} must be a string')
@@ -56,6 +58,22 @@ def load_metric_profile(path):
 def apply_metric_profile(profile, experiment):
     from musicbench.setup_metrics import merge_defaults
     return merge_defaults(profile, experiment)
+
+
+def evaluation_environment(config, metric, options=None):
+    options = options if options is not None else config.get('metric_options', {}).get(metric, {})
+    return options.get('env') or config.get('metric_environments', {}).get(metric) or config.get('evaluation_environment') or 'current'
+
+
+def use_shared_environment(config, env):
+    """Explicitly choose one environment, preserving all model and device options."""
+    config = copy.deepcopy(config)
+    config['evaluation_environment'] = env
+    config['metric_environments'] = {}
+    for options in config.get('metric_options', {}).values():
+        options.pop('env', None)
+        options.get('separation', {}).pop('env', None)
+    return config
 
 
 def save_yaml(path, data):
@@ -187,16 +205,22 @@ def interactive(catalog_path, task=None, metric_profile=None):
               'runtime_environment': copy.deepcopy(metric_profile.get('runtime_environment', {})), 'ranking': {}}
     if reference:
         config['reference_audio'] = reference
+    shared = ask('所有评分器共用的 conda 环境（current 使用主环境）', metric_profile.get('evaluation_environment') or metric_profile.get('metric_options', {}).get('songeval', {}).get('env') or 'musicbench')
+    config['evaluation_environment'] = shared
+    custom_environments = ask_bool('是否为个别评分器单独指定环境？', False)
+    if not custom_environments:
+        config = use_shared_environment(config, shared)
     for name, rule in rules.items():
         if any(inputs.get(condition) is False for condition in rule.get('requires', [])):
             continue
         options = copy.deepcopy(config['metric_options'].get(name, {}))
         if name == 'songeval':
             options['repo'] = ask('已跑通的 SongEval 仓库路径', options.get('repo', ROOT / 'third_party/SongEval'))
-            options['env'] = ask('SongEval conda 环境', options.get('env', 'songeval'))
+            if custom_environments:
+                options['env'] = ask('SongEval conda 环境', options.get('env', shared))
             options['muq_model'] = ask('SongEval MuQ 本地模型目录', options.get('muq_model', '/data/musicbench-evaluators/MuQ/weights/muq'))
-        else:
-            config['metric_environments'][name] = ask(f'{name} conda 环境', config['metric_environments'].get(name, ({'clap_score': 'clap', 'fad': 'clap'}.get(name, name)) if task == 'text2music' else 'current'))
+        elif custom_environments:
+            config['metric_environments'][name] = ask(f'{name} conda 环境', config['metric_environments'].get(name, shared))
         options['cuda_visible_devices'] = ask(f'{name} 评测显卡编号（inherit/cpu）', options.get('cuda_visible_devices', 'inherit'))
         options['device'] = ask(f'{name} 设备 auto/cpu/cuda', options.get('device', 'auto'))
         if name in ('clap_score', 'fad', 'mulan', 'lyrics'):
@@ -214,7 +238,7 @@ def interactive(catalog_path, task=None, metric_profile=None):
             options['beam_size'] = ask_int('歌词识别 beam size', options.get('beam_size', 5))
             if options['audio_source'] == 'demucs':
                 separation = options.get('separation', {})
-                options['separation'] = {**separation, 'env': ask('人声分离 conda 环境', separation.get('env', 'demucs')),
+                options['separation'] = {**separation, 'env': ask('人声分离 conda 环境', separation.get('env', shared)) if custom_environments else shared,
                                          'device': ask('人声分离设备 auto/cpu/cuda', separation.get('device', 'auto')),
                                          'cuda_visible_devices': ask('人声分离显卡编号', separation.get('cuda_visible_devices', options['cuda_visible_devices'])),
                                          'model': ask('Demucs 模型', separation.get('model', 'htdemucs')),
@@ -494,7 +518,7 @@ def execute(config, output):
         save_json(target / 'request.json', job)
         destination = target / 'result.json'
         try:
-            env = options.get('env', config.get('metric_environments', {}).get(metric))
+            env = evaluation_environment(config, metric, options)
             run(f'score-{label}-{metric}', env, [ROOT / 'scripts/metric_worker.py',
                 '--request', target / 'request.json', '--output', destination], options=options)
             result = json.loads(destination.read_text())
@@ -568,7 +592,7 @@ def execute(config, output):
                     save_json(target / 'input.json', [{'id': r['id'], 'audio_path': r['audio_path'],
                               'has_vocal': r['metadata'].get('has_vocal')} for r in rows])
                     try:
-                        run(f'score-{label}-{metric}', options.get('env', config.get('metric_environments', {}).get(metric)), [ROOT / 'scripts/songeval_worker.py',
+                        run(f'score-{label}-{metric}', evaluation_environment(config, metric, options), [ROOT / 'scripts/songeval_worker.py',
                             '--repo', options.get('repo', ROOT / 'third_party/SongEval'), '--input', target / 'input.json',
                             '--output', target / 'raw.json', '--device', options.get('device', 'auto'),
                             '--muq-model', options.get('muq_model', '')], options=options)
@@ -591,7 +615,7 @@ def execute(config, output):
                     if config.get('plugins'):
                         args += ['--plugins', *config['plugins']]
                     try:
-                        run(f'score-{label}-{metric}', config.get('metric_environments', {}).get(metric), args, options=options)
+                        run(f'score-{label}-{metric}', evaluation_environment(config, metric, options), args, options=options)
                         scores[label].update(json.loads((target / 'scores.json').read_text())['algorithms'][label])
                     except Exception as exc:
                         scores[label][metric] = {'available': False, 'coverage': 0.0, 'reason': str(exc)}
@@ -628,6 +652,7 @@ def main(argv=None):
     parser.add_argument('task', nargs='?')
     parser.add_argument('--catalog', default=str(ROOT / 'configs/tasks.yaml'))
     parser.add_argument('--config')
+    parser.add_argument('--evaluation-env', help='Use one environment for all scoring components, overriding individual environment settings')
     parser.add_argument('--metric-config', help='Evaluator profile; defaults to configs/metrics.local.yaml if present')
     parser.add_argument('--save-config')
     parser.add_argument('--output')
@@ -641,7 +666,10 @@ def main(argv=None):
             config, base = read_yaml(path), path.parent
         else:
             config, base = interactive(args.catalog, args.task, profile), ROOT
-        config = apply_metric_profile(profile, config)
+        if args.config:
+            config = apply_metric_profile(profile, config)
+        if args.evaluation_env:
+            config = use_shared_environment(config, args.evaluation_env)
         config = validate(config, base)
         if not args.config or args.save_config:
             saved = Path(args.save_config or ROOT / 'configs/experiment.local.yaml').resolve()

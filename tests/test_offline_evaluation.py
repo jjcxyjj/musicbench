@@ -86,3 +86,19 @@ finally:
     s.close()
 '''
     subprocess.run([sys.executable, '-c', code], check=True, cwd=Path(__file__).resolve().parents[1])
+
+
+def test_demucs_uses_local_repo_and_legacy_checkpoint_compatibility(tmp_path, monkeypatch):
+    from musicbench.evaluation import primary
+    repo = tmp_path / 'weights'
+    repo.mkdir()
+    monkeypatch.setattr(primary, 'device_name', lambda _: 'cpu')
+    def run(command, **kwargs):
+        assert command[command.index('--repo') + 1] == str(repo)
+        assert kwargs['env']['TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD'] == '1'
+        output = Path(command[command.index('-o') + 1]) / 'htdemucs' / 'test' / 'vocals.wav'
+        output.parent.mkdir(parents=True)
+        output.touch()
+    monkeypatch.setattr(primary.subprocess, 'run', run)
+    result = primary.separate([{'id': 'a', 'audio_path': 'input.wav'}], {'repo': str(repo)}, tmp_path / 'stems')
+    assert result['available'] is True

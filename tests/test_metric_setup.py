@@ -160,3 +160,67 @@ def test_workflow_cli_uses_explicit_profile_and_experiment_overrides(tmp_path, m
     assert workflow.main(['--metric-config', str(profile), '--config', str(experiment), '--dry-run']) == 0
     assert captured[0]['metric_environments']['clap_score'] == 'shared_clap'
     assert captured[0]['metric_options']['clap_score'] == {'device': 'cuda', 'model': 'official/model'}
+
+
+def test_shared_environment_selection_clears_old_overrides_without_touching_algorithms():
+    from musicbench.workflow import use_shared_environment, evaluation_environment
+    original = {'algorithms': [{'env': 'generator'}], 'evaluation_environment': 'old',
+                'metric_environments': {'clap_score': 'old_clap'},
+                'metric_options': {'songeval': {'env': 'old_song', 'repo': '/song'},
+                                   'lyrics': {'separation': {'env': 'old_demucs', 'repo': '/demucs'}}}}
+    shared = use_shared_environment(original, 'shared_song')
+    assert shared['algorithms'][0]['env'] == 'generator'
+    assert evaluation_environment(shared, 'clap_score') == 'shared_song'
+    assert evaluation_environment(shared, 'songeval') == 'shared_song'
+    assert evaluation_environment(shared, 'separation', shared['metric_options']['lyrics']['separation']) == 'shared_song'
+    assert original['metric_options']['songeval']['env'] == 'old_song'
+    assert shared['metric_options']['songeval']['repo'] == '/song'
+
+
+def test_shared_environment_allows_specific_exception():
+    from musicbench.workflow import evaluation_environment
+    config = {'evaluation_environment': 'shared', 'metric_environments': {'fad': 'fad_special'},
+              'metric_options': {'songeval': {'env': 'song_special'}}}
+    assert evaluation_environment(config, 'audiobox') == 'shared'
+    assert evaluation_environment(config, 'fad') == 'fad_special'
+    assert evaluation_environment(config, 'songeval') == 'song_special'
+
+
+def test_checker_can_force_existing_profile_into_one_environment(tmp_path, monkeypatch):
+    path = profile_file(tmp_path)
+    before = path.read_bytes()
+    calls = mock_runner(monkeypatch, tmp_path, existing=['one_shared'])
+    assert setup.main(['--metrics', 'clap_score', 'lyrics', '--profile', str(path), '--shared-env', 'one_shared']) == 0
+    workers = [c for c in calls if '--request' in c]
+    assert len(workers) == 2
+    assert all(c[4] == 'one_shared' for c in workers)
+    assert path.read_bytes() == before
+
+
+def test_wizard_shared_choice_is_not_overridden_by_old_profile(tmp_path, monkeypatch):
+    import musicbench.workflow as workflow
+    path = profile_file(tmp_path)
+    saved = []
+    def wizard(catalog, task, profile):
+        return {**workflow.use_shared_environment(profile, 'new_shared'),
+                'task': 'text2music', 'metrics': ['clap_score']}
+    monkeypatch.setattr(workflow, 'interactive', wizard)
+    monkeypatch.setattr(workflow, 'validate', lambda config, base: config)
+    monkeypatch.setattr(workflow, 'save_yaml', lambda path, config: saved.append(config))
+    assert workflow.main(['--metric-config', str(path), '--dry-run']) == 0
+    assert saved[0]['metric_environments'] == {}
+    assert saved[0]['evaluation_environment'] == 'new_shared'
+
+
+def test_current_shared_environment_needs_no_conda_inventory(tmp_path, monkeypatch):
+    import sys
+    path = profile_file(tmp_path)
+    monkeypatch.setattr(setup, 'ROOT', tmp_path)
+    def run(command, **kwargs):
+        assert command[0] == sys.executable
+        assert '--request' in command
+        Path(command[command.index('--output') + 1]).write_text('{"status":"ready"}')
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(setup.subprocess, 'run', run)
+    assert setup.main(['--metrics', 'clap_score', '--profile', str(path), '--shared-env', 'current',
+                       '--conda', '/nonexistent/conda']) == 0

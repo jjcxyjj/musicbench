@@ -99,6 +99,8 @@ def verify(job):
         model = WhisperModel(path, device='cpu', compute_type='int8', local_files_only=True)
         result.update(model=name, model_path=str(Path(path).resolve()))
     elif component == 'demucs':
+        # Official local Demucs 4.0.1 checkpoints include their model class.
+        os.environ['TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD'] = '1'
         from demucs.pretrained import get_model
         name = options.get('model', 'htdemucs')
         model = get_model(name, repo=Path(options['repo'])).to('cpu').eval()

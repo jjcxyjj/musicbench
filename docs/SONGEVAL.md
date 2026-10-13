@@ -1,13 +1,13 @@
 # SongEval 本地接入
 
-使用你已经跑通的仓库和 conda 环境，无需重新安装。当前任务固定包含 SongEval，不区分简单/复杂验证。完整手工准备与缺依赖排查见 [离线教程](METRIC_SETUP.md)。
+使用你已经跑通的仓库和 conda 环境，无需重新安装。默认所有评分器复用这一环境，按检查结果补充缺库；也可以将 evaluation_environment 改为 musicbench。当前任务固定包含 SongEval，不区分简单/复杂验证。完整手工准备与缺依赖排查见 [离线教程](METRIC_SETUP.md)。
 
 在 configs/metrics.local.yaml 中配置：
 
 ```yaml
+evaluation_environment: your_songeval_env
 metric_options:
   songeval:
-    env: your_songeval_env
     repo: /data/musicbench-evaluators/SongEval
     muq_model: /data/musicbench-evaluators/MuQ/weights/muq
     device: auto

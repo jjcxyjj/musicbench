@@ -117,7 +117,7 @@ parameters: {}
 
 ## 评测环境
 
-主环境只安装 MusicBench 基础依赖。按 [离线教程](METRIC_SETUP.md) 手动准备库与本地权重，再用配置脚本检查，也可按下表复用已有独立环境。
+主环境可以只安装基础依赖，也可以与全部评分器共用同一环境。默认通过 evaluation_environment 指定一套评分环境，优先复用已跑通的 SongEval。按 [离线教程](METRIC_SETUP.md) 手动准备库与本地权重，再用配置脚本检查，也可按下表复用已有独立环境。
 
 | 评分器 | 主要依赖 | 模型配置 |
 | --- | --- | --- |
@@ -131,16 +131,16 @@ parameters: {}
 对应模板为 envs/metric-*.yml，在联网准备机手工创建后迁移环境。当前主指标只接受本地模型路径，缺文件直接报错；评分器禁止联网，不依赖自动缓存下载。GPU 版 PyTorch/CTranslate2 需与实际 CUDA/驱动兼容。
 
 ```yaml
-metric_environments: {audiobox: audiobox, lyrics: lyrics, clap_score: clap, mulan: mulan, fad: clap}
+evaluation_environment: songeval  # 也可填 musicbench
 metric_options:
-  songeval: {repo: /path/to/SongEval, env: your_songeval_env, muq_model: /data/musicbench-evaluators/MuQ/weights/muq, device: auto, cuda_visible_devices: '0'}
+  songeval: {repo: /path/to/SongEval, muq_model: /data/musicbench-evaluators/MuQ/weights/muq, device: auto, cuda_visible_devices: '0'}
   lyrics:
     model: /data/musicbench-evaluators/faster-whisper/weights/large-v3
     device: auto
     language: zh
     beam_size: 5
     audio_source: demucs
-    separation: {env: demucs, device: auto, model: htdemucs, repo: /data/musicbench-evaluators/demucs/weights, cuda_visible_devices: '0'}
+    separation: {device: auto, model: htdemucs, repo: /data/musicbench-evaluators/demucs/weights, cuda_visible_devices: '0'}
 ```
 
 其他评测器的 metric_options 同样可设 env、device、cuda_visible_devices、timeout；model 表示本地模型目录（Demucs 为本地 repo 中的模型名称）。Audiobox 官方库自动选择设备，指定 device 后会将模型迁移至该设备。

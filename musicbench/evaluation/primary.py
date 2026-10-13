@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import math
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -144,12 +145,13 @@ def separate(rows, options, output_dir):
     model = options.get('model', 'htdemucs')
     device = device_name(options.get('device', 'auto'))
     repo = local_directory(options.get('repo'), 'lyrics.separation.repo', config=False, weights=False)
+    demucs_env = {**os.environ, 'TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD': '1'}
     for index, row in enumerate(rows):
         try:
             destination = Path(output_dir) / f'sample_{index:06d}'
             subprocess.run([sys.executable, '-m', 'demucs', '--two-stems', 'vocals', '-n', model,
                             '--repo', repo, '-d', device, '-o', str(destination), row['audio_path']], check=True,
-                           timeout=options.get('timeout', 1800))
+                           timeout=options.get('timeout', 1800), env=demucs_env)
             files = list(destination.glob(f'{model}/*/vocals.wav'))
             if len(files) != 1:
                 raise ValueError('Demucs did not write one vocal stem')

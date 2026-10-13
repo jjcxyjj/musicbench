@@ -1,6 +1,6 @@
 # MusicBench
 
-交互式、多算法、独立环境的音乐评测框架。当前重点是文生音乐：按任务固定指标规则，根据可用输入自动启用评测，所有算法和评分器串行运行。
+交互式、多算法的音乐评测框架。算法使用各自环境，评分器默认共用一个环境。当前重点是文生音乐：按任务固定指标规则，根据可用输入自动启用评测，所有算法和评分器串行运行。
 
 离线服务器已有主环境时执行；环境准备和迁移见下方教程。
 
@@ -8,7 +8,7 @@
 conda activate musicbench
 pip install --no-deps --no-build-isolation -e .
 # 离线服务器：先手工准备评分环境和本地模型，见下文教程
-python scripts/setup_metrics.py --init-config
+python scripts/setup_metrics.py --init-config --shared-env songeval
 # 编辑 configs/metrics.local.yaml 后检查
 python scripts/setup_metrics.py
 ./run.sh
@@ -48,10 +48,10 @@ python scripts/setup_metrics.py
 
 ## 离线配置评测库和本地模型
 
-服务器无需联网。评分环境、代码库和权重由你手动准备，模型可放在各自库的 weights 目录；完整教程包含 git clone、依赖模板、目录布局、模型格式和环境迁移：[离线配置教程](docs/METRIC_SETUP.md)。已有 SongEval 直接复用。
+服务器无需联网。优先复用你已跑通的 SongEval 环境，也可用 musicbench；只需在 YAML 中填写 `evaluation_environment: 你的环境名`。评分库、代码和权重由你手动准备，模型可放在各自库的 weights 目录；完整教程包含 git clone、依赖模板、目录布局、模型格式和环境迁移：[离线配置教程](docs/METRIC_SETUP.md)。已有 SongEval 直接复用，个别指标只有依赖冲突时才拆环境。
 
 ```bash
-python scripts/setup_metrics.py --init-config
+python scripts/setup_metrics.py --init-config --shared-env songeval
 # 手工填写 configs/metrics.local.yaml 中的环境与本地权重路径
 python scripts/setup_metrics.py --libraries-only
 python scripts/setup_metrics.py
@@ -70,7 +70,7 @@ python scripts/setup_metrics.py
 
 ## 环境与算法
 
-主环境负责配置、数据和报告，各算法/评分器使用 `conda run` 指定环境，不需要手动反复 activate。无需把所有模型依赖装在一起。现有 SongEval 仓库与环境可直接通过 YAML 指定，详见 [SongEval 接入](docs/SONGEVAL.md)。
+主环境负责配置、数据和报告，各生成算法保留自己的环境，所有评分器默认共用一套环境，通过 `conda run` 串行启动，不需要手动反复 activate。只有实际依赖冲突时才为个别评分器拆环境。现有 SongEval 仓库与环境可直接通过 YAML 指定，详见 [SongEval 接入](docs/SONGEVAL.md)。
 
 算法在 `algorithms/<name>/config.yaml` 声明 task、env、infer_script 和 parameter_schema。推理脚本只需接收 `--manifest`、`--output`，通过 JSON/JSONL 交换数据，不要求安装 MusicBench。`my_t2m` 是正弦音模板，`t2m_passthrough` 复制参考音频，两者仅用于流程调试，接真实模型后再做算法比较。
 

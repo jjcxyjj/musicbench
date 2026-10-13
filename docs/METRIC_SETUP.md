@@ -2,6 +2,32 @@
 
 服务器无需联网。项目不再提供自动安装/克隆/下载：`scripts/setup_metrics.py` 现在只检查现有环境、依赖及本地权重，缺少时列出问题、代码来源和本教程。所有内置评分器只读取明确配置的本地文件；不会把缺失模型回退到 Hugging Face 下载。底层库可能使用 Hugging Face 的本地加载接口，但不要求服务器有 Hugging Face 缓存。
 
+## 优先复用一个评分环境
+
+默认所有评分器共用一个 conda 环境，模型和权重仍分别放在各自库里。优先复用你已跑通的 SongEval，也可以把评分依赖放进 musicbench：只需修改配置中的一行。
+
+```yaml
+evaluation_environment: songeval  # 替换为你的实际 SongEval 环境名，也可填 musicbench
+```
+
+先检查现有环境，不安装任何内容：
+
+```bash
+python scripts/setup_metrics.py --shared-env songeval --libraries-only
+# 或检查 musicbench
+python scripts/setup_metrics.py --shared-env musicbench --libraries-only
+```
+
+以上命令临时强制所有评分器用同一环境，原 YAML 不变。缺库时按下面教程在该环境手工补齐，已装且兼容的库不必重复安装。然后用同一命令去掉 --libraries-only 检查本地模型。检查通过后将 evaluation_environment 改为实际环境名。
+
+新配置也可一次生成：`python scripts/setup_metrics.py --init-config --shared-env songeval`。已有配置不用重建；实验运行时可以 `./run.sh text2music --evaluation-env songeval` 强制统一全部评分器（含 Demucs）。交互界面默认只问一次评分环境，选择“为个别评分器单独指定环境”时才展开独立环境设置。
+
+如果确有冲突，可只覆盖该项，例如 `metric_options.lyrics.separation.env: demucs_env`，其他指标仍共用。环境优先级：指标 options.env > metric_environments 映射 > evaluation_environment > current；命令行 --evaluation-env 显式选择共用环境时会清除各项环境覆盖。生成算法的 env 不受影响。
+
+依赖合并的候选模板为 [envs/evaluation.yml](../envs/evaluation.yml)，包含主框架与所有评分库。模板按 SongEval 的 torch/torchaudio 2.7.0、MuQ 0.1.0、Audiobox 0.0.4、Demucs 4.0.1 等版本组织，目标是 Linux 服务器；包声明的约束可重叠，并不等于已验证你的 CUDA、动态库和模型。不要用模板覆盖已跑通的 SongEval；优先对原环境检查并补缺库。
+
+本机只有轻量 musicbench 环境，评分库尚未安装，也没有你的服务器 SongEval 环境；因此没有宣称全部模型已在一个环境跑通。macOS 的依赖解析也不能替代 Linux 服务器验证。
+
 ## 1. 目录约定
 
 你可以把代码和模型放到各自库内，不需要统一缓存。下面是示例布局，路径均可在 YAML 中改为你现有目录：
@@ -93,35 +119,37 @@ curl -L https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/955717e8-8726e2
 
 ## 4. 手动准备 conda 环境
 
-最稳妥的是在与服务器相同系统、架构且兼容驱动的联网 Linux 机器准备环境，再打包迁移。不能把 macOS 环境直接复制到 Linux。以下命令均在联网准备机项目根目录执行：
+优先在已跑通的 SongEval 环境补齐缺少的评分库，或在 musicbench 中准备全部依赖；算法环境继续独立。联网准备机应与服务器同系统、架构和兼容驱动，不能把 macOS 环境直接复制到 Linux。
+
+如果没有可复用的评分环境，可在联网 Linux 准备机只创建一套完整环境：
 
 ```bash
-conda env create -f envs/benchmark.yml
-conda env create -f envs/metric-audiobox.yml -n musicbench-eval-audiobox
-conda env create -f envs/metric-clap.yml -n musicbench-eval-clap
-conda env create -f envs/metric-mulan.yml -n musicbench-eval-mulan
-conda env create -f envs/metric-lyrics.yml -n musicbench-eval-lyrics
-conda env create -f envs/metric-demucs.yml -n musicbench-eval-demucs
-# 仅在没有现成 SongEval 环境时创建
-conda env create -f envs/songeval.yml -n musicbench-eval-songeval
+conda env create -f envs/evaluation.yml
+# 这套环境也包含主框架依赖，可同时承担编排与评分
+conda activate musicbench-eval
+pip install --no-deps --no-build-isolation -e .
+# 配置 evaluation_environment: musicbench-eval
+# 启动主流程：BENCH_ENV=musicbench-eval ./run.sh text2music
 ```
 
-依赖对应关系：audiobox_aesthetics→Audiobox；transformers/librosa/torch→CLAP；muq→MuQ/MuLan；faster_whisper/pypinyin/phonemizer→歌词；demucs→分离；omegaconf/safetensors/einops→SongEval。模板还包含 ffmpeg；歌词环境包含 espeak-ng。检查器会列出缺少或无法导入的库及其异常原因。
+已有 SongEval/musicbench 环境时，用已准备好的离线 wheelhouse 手工补缺，例如在服务器激活目标环境后 `python -m pip install --no-index --find-links /data/wheelhouse audiobox-aesthetics faster-whisper pypinyin phonemizer`。wheelhouse 应包含所需版本和全部依赖；PyTorch/torchaudio 保持匹配，避免无意升级已跑通的版本。ffmpeg、espeak-ng 等系统组件也须放进该环境或准备动态库路径。
+
+逐项 envs/metric-*.yml 保留作为确实冲突时的备用模板，不再默认创建六套环境。Demucs 固定 4.0.1 是为了保持当前 get_model/--repo 接口和评分协议；更新大版本需先核对 API。官方本地 Demucs 4.0.1 checkpoint 包含模型类，适配器仅在分离/检查子进程启用与 PyTorch 2.7 的加载兼容设置，不改变其他评分器进程。
 
 可用 [conda-pack 官方工具](https://conda.github.io/conda-pack/) 迁移，例如：
 
 ```bash
 # 联网准备机
 conda install -n base -c conda-forge conda-pack
-conda pack -n musicbench-eval-clap -o musicbench-eval-clap.tar.gz
+conda pack -n musicbench-eval -o musicbench-eval.tar.gz
 
 # 离线服务器：解包到最终路径，只在该环境里运行 conda-unpack
-mkdir -p /data/conda/envs/musicbench-eval-clap
-tar -xzf musicbench-eval-clap.tar.gz -C /data/conda/envs/musicbench-eval-clap
-/data/conda/envs/musicbench-eval-clap/bin/conda-unpack
+mkdir -p /data/conda/envs/musicbench-eval
+tar -xzf musicbench-eval.tar.gz -C /data/conda/envs/musicbench-eval
+/data/conda/envs/musicbench-eval/bin/conda-unpack
 ```
 
-其他环境同样处理。YAML 可直接填 `/data/conda/envs/musicbench-eval-clap` 这种绝对前缀路径，无需强求 conda 名称登记。主环境也要迁移；MusicBench 代码在服务器主环境中可以 `pip install --no-deps --no-build-isolation -e .`，前提是主环境的依赖和 setuptools/wheel 已准备好。
+复用 SongEval 时打包你的实际环境名即可。YAML 的 evaluation_environment 可直接填 `/data/conda/envs/musicbench-eval` 这种绝对前缀路径，无需强求 conda 名称登记。主环境也要迁移；MusicBench 代码在服务器主环境中可以 `pip install --no-deps --no-build-isolation -e .`，前提是主环境的依赖和 setuptools/wheel 已准备好。
 
 若选择 wheelhouse 手工安装，需在匹配服务器的联网机器下载所有依赖和构建依赖，离线用 `pip install --no-index --find-links /data/wheelhouse ...`。Git 仓库的可编辑安装也需要准备构建工具，不能让 pip 在隔离构建阶段偷偷尝试联网。CUDA 版 PyTorch 和 faster-whisper/CTranslate2 的运行库分别核对；CPU 加载通过不等于 CUDA 已验证。
 

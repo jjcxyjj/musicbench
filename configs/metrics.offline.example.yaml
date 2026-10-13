@@ -4,18 +4,13 @@ version: 1
 runtime_environment:
   HF_HUB_OFFLINE: '1'
   TRANSFORMERS_OFFLINE: '1'
-metric_environments:
-  audiobox: musicbench-eval-audiobox
-  clap_score: musicbench-eval-clap
-  fad: musicbench-eval-clap
-  mulan: musicbench-eval-mulan
-  lyrics: musicbench-eval-lyrics
+# Replace with your existing SongEval environment, or musicbench.
+evaluation_environment: songeval
 metric_options:
   audiobox:
     checkpoint: /data/musicbench-evaluators/audiobox-aesthetics/weights/checkpoint.pt
     device: auto
   songeval:
-    env: your_existing_songeval_env
     repo: /data/musicbench-evaluators/SongEval
     muq_model: /data/musicbench-evaluators/MuQ/weights/muq
     device: auto
@@ -36,7 +31,6 @@ metric_options:
     audio_source: demucs
     device: auto
     separation:
-      env: musicbench-eval-demucs
       model: htdemucs
       repo: /data/musicbench-evaluators/demucs/weights
       device: auto

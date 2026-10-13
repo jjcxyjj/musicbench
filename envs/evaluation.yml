@@ -1,0 +1,33 @@
+# Optional combined environment for harness + all primary evaluators.
+# For existing SongEval/musicbench environments, use the offline tutorial instead of overwriting them.
+# Target: Linux server. This is a candidate recipe, not a CUDA/model execution certification.
+name: musicbench-eval
+channels: [conda-forge]
+dependencies:
+  - python=3.10
+  - ffmpeg
+  - espeak-ng
+  - pip
+  - setuptools
+  - wheel
+  - pip:
+      - numpy==1.26.4
+      - scipy
+      - scikit-learn
+      - matplotlib
+      - pyyaml
+      - mir_eval
+      - torch==2.7.0
+      - torchaudio==2.7.0
+      - transformers>=4.37,<4.58
+      - librosa==0.11.0
+      - muq==0.1.0
+      - audiobox-aesthetics==0.0.4
+      - faster-whisper==1.2.1
+      - demucs==4.0.1
+      - pypinyin
+      - phonemizer
+      - hydra-core==1.3.2
+      - safetensors>=0.5.3
+      - einops
+      - soundfile
