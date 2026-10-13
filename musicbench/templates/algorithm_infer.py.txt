@@ -1,0 +1,63 @@
+"""Standalone adapter template. Implement load_model() and generate() first."""
+import argparse
+import json
+from pathlib import Path
+import random
+import sys
+
+
+def load_model(checkpoint, args):
+    # Import your model library, load weights, and return the model here.
+    raise NotImplementedError('Connect your real model in load_model() before evaluation')
+
+
+def generate(model, sample, args):
+    """Return (audio_array, sample_rate) using your model's actual API.
+
+    sample['metadata'] contains style_prompt, lyrics, language, generation_seed.
+    args contains checkpoint, duration, steps, guidance, sr.
+    Keep style and lyrics separate; seed the model from generation_seed.
+    """
+    raise NotImplementedError('Connect your real model in generate() before evaluation')
+
+
+def seed_everything(seed):
+    random.seed(seed)
+    if 'numpy' in sys.modules:
+        sys.modules['numpy'].random.seed(seed)
+    if 'torch' in sys.modules:
+        torch = sys.modules['torch']
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument('--manifest', required=True)
+    p.add_argument('--output', required=True)
+    p.add_argument('--checkpoint', default='')
+    p.add_argument('--duration', type=float, default=30)
+    p.add_argument('--steps', type=int, default=30)
+    p.add_argument('--guidance', type=float, default=3)
+    p.add_argument('--sr', type=int, default=48000)
+    args = p.parse_args()
+    samples = json.loads(Path(args.manifest).read_text(encoding='utf-8'))
+    output = Path(args.output).resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    audio_dir = output.parent / 'generated_audio'
+    audio_dir.mkdir(exist_ok=True)
+    model = load_model(args.checkpoint, args)
+    import soundfile as sf
+    with output.open('w', encoding='utf-8') as handle:
+        for index, sample in enumerate(samples):
+            seed_everything(int(sample.get('metadata', {}).get('generation_seed', 42)))
+            audio, sr = generate(model, sample, args)
+            path = audio_dir / f'sample_{index:06d}.wav'
+            sf.write(str(path), audio, sr)
+            handle.write(json.dumps({'id': sample['id'], 'output': {'audio_path': str(path)}}, ensure_ascii=False) + '\n')
+            handle.flush()
+
+
+if __name__ == '__main__':
+    main()

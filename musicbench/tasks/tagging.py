@@ -16,5 +16,5 @@ class TaggingTask(Task):
     name = "tagging"
 
     @classmethod
-    def default_metrics(cls):
+    def default_metrics(cls, tier="basic"):
         return ["tag_map", "tag_macro_f1", "tag_macro_auc"]

@@ -33,7 +33,7 @@ def package(dataset_name: str, split: str, output_dir: str, **dataset_kwargs: An
     os.makedirs(audio_dir, exist_ok=True)
 
     manifest: List[Dict[str, Any]] = []
-    for s in samples:
+    for index, s in enumerate(samples):
         if not s.audio_path or not os.path.isfile(s.audio_path):
             # Keep samples whose reference audio is missing so the manifest
             # still lists them; algorithms/metrics may skip them.
@@ -47,7 +47,7 @@ def package(dataset_name: str, split: str, output_dir: str, **dataset_kwargs: An
             )
             continue
         ext = os.path.splitext(s.audio_path)[1] or ".wav"
-        dst = os.path.join(audio_dir, f"{s.id}{ext}")
+        dst = os.path.join(audio_dir, f"sample_{index:06d}{ext}")
         shutil.copy2(s.audio_path, dst)
         manifest.append(
             {

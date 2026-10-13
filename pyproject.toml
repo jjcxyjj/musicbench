@@ -14,6 +14,7 @@ dependencies = [
     "pyyaml",
     "scikit-learn",
     "mir_eval",
+    "matplotlib",
 ]
 
 [project.optional-dependencies]
@@ -21,9 +22,13 @@ dev = ["pytest"]
 
 [project.scripts]
 musicbench = "musicbench.cli:main"
+musicbench-algorithms = "musicbench.algorithms:main"
 
 [tool.setuptools.packages.find]
 include = ["musicbench*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.setuptools.package-data]
+musicbench = ["templates/*.txt"]

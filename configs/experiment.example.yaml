@@ -1,0 +1,56 @@
+version: 2
+task: text2music
+seed: 42
+repetitions: 1
+plugins: []
+dataset:
+  name: manifest
+  path: ../data/inputs.json
+  num_samples: 10
+# Explicitly mark inputs; true requires every sampled record to provide the field.
+inputs: {style_prompt: true, lyrics: true, reference_audio: false}
+algorithms:
+  - name: my_t2m
+    task: text2music
+    env: my_t2m_env
+    cuda_visible_devices: '0'
+    cwd: ../algorithms/my_t2m
+    infer_script: infer.py
+    parameter_schema:
+      checkpoint: {flag: --checkpoint, type: path, label: 模型权重路径, default: ''}
+      duration: {flag: --duration, type: float, minimum: 0.1, default: 30}
+      sr: {flag: --sr, type: int, minimum: 8000, default: 48000}
+    parameters: {checkpoint: '', duration: 30, sr: 48000}
+    args: []
+# my_t2m is a sine-wave template. Connect a real generator before scientific comparisons.
+# Fixed task policy is filled from built-ins if metric_rules is omitted.
+metric_environments:
+  audiobox: audiobox
+  lyrics: lyrics
+  clap_score: clap
+  mulan: mulan
+  fad: clap
+metric_options:
+  audiobox: {checkpoint: '', cuda_visible_devices: '0'}
+  songeval:
+    repo: ../third_party/SongEval
+    env: songeval
+    cuda_visible_devices: '0'
+    device: auto
+    timeout: 3600
+  lyrics:
+    model: large-v3
+    language: zh
+    device: auto
+    cuda_visible_devices: '0'
+    beam_size: 5
+    audio_source: demucs
+    separation: {env: demucs, device: auto, cuda_visible_devices: '0', model: htdemucs}
+  clap_score: {model: laion/clap-htsat-fused, device: auto, cuda_visible_devices: '0'}
+  mulan: {model: OpenMuQ/MuQ-MuLan-large, device: auto, cuda_visible_devices: '0'}
+  fad: {model: laion/clap-htsat-fused, device: auto, cuda_visible_devices: '0'}
+# When reference_audio is true:
+# reference_audio: {source: directory, path: /data/real_music, num_samples: 100}
+# Or use the sampled manifest's audio_path values: reference_audio: {source: dataset}
+require_metrics: true
+timeout: 7200

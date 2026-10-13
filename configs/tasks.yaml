@@ -1,0 +1,23 @@
+# Add tasks and metric requirements here; new implementations register via plugins.
+plugins: []
+tasks:
+  text2music:
+    dataset: {name: manifest, path: dataset/manifest.json}
+    metrics:
+      audiobox: {category: aesthetics, requires: []}
+      songeval: {category: aesthetics, requires: []}
+      lyrics: {category: lyrics, requires: [lyrics]}
+      clap_score: {category: style, requires: [style_prompt]}
+      mulan: {category: style, requires: [style_prompt]}
+      fad: {category: distribution, requires: [reference_audio]}
+  beat_tracking:
+    dataset: {name: manifest, path: dataset/manifest.json}
+    metrics:
+      beat_fmeasure: {category: task, requires: []}
+      tempo_mae: {category: task, requires: []}
+  tagging:
+    dataset: {name: manifest, path: dataset/manifest.json}
+    metrics:
+      tag_map: {category: task, requires: []}
+      tag_macro_f1: {category: task, requires: []}
+      tag_macro_auc: {category: task, requires: []}

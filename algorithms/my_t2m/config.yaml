@@ -2,3 +2,9 @@ name: my_t2m
 env: my_t2m_env            # ← 改成你模型自己的 conda 环境名
 task: text2music
 infer_script: infer.py
+
+# The wizard asks these parameters and forwards flags to infer.py.
+parameter_schema:
+  checkpoint: {flag: --checkpoint, type: path, label: 模型权重路径, default: ''}
+  duration: {flag: --duration, type: float, minimum: 0.1, label: 生成时长（秒）, default: 3}
+  sr: {flag: --sr, type: int, minimum: 8000, label: 采样率, default: 48000}

@@ -18,5 +18,5 @@ class BeatTrackingTask(Task):
     metrics = []  # populated lazily to avoid import cycle; see default_metrics.
 
     @classmethod
-    def default_metrics(cls):
+    def default_metrics(cls, tier="basic"):
         return ["beat_fmeasure", "tempo_mae"]

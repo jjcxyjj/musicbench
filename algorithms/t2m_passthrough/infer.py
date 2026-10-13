@@ -36,7 +36,7 @@ def main() -> int:
     os.makedirs(out_dir, exist_ok=True)
 
     lines: List[str] = []
-    for row in manifest:
+    for index, row in enumerate(manifest):
         ref_path = row.get("audio_path", "")
         if not ref_path or not os.path.isabs(ref_path):
             ref_path = os.path.join(base, ref_path) if ref_path else ""
@@ -44,7 +44,7 @@ def main() -> int:
         gen_path = ""
         if ref_path and os.path.isfile(ref_path):
             ext = os.path.splitext(ref_path)[1] or ".wav"
-            gen_path = os.path.join(out_dir, f"{row['id']}{ext}")
+            gen_path = os.path.join(out_dir, f"sample_{index:06d}{ext}")
             shutil.copy2(ref_path, gen_path)
 
         out: Dict[str, Any] = {

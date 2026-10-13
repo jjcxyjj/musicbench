@@ -1,0 +1,9 @@
+name: clap
+channels: [conda-forge]
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+      - torch
+      - transformers>=4.37,<5
+      - librosa

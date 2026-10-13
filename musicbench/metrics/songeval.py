@@ -39,6 +39,11 @@ class SongEvalMetric(Metric):
                        str(root / "scripts/songeval_worker.py"), "--repo", str(repo),
                        "--input", str(src), "--output", str(dst),
                        "--device", os.environ.get("MUSICBENCH_SONGEVAL_DEVICE", "auto")]
+            conda_env = os.environ.get("MUSICBENCH_SONGEVAL_ENV")
+            if conda_env:
+                flag = "-p" if os.path.isabs(conda_env) else "-n"
+                command = [os.environ.get("CONDA", "conda"), "run", "--no-capture-output",
+                           flag, conda_env, "python", *command[1:]]
             try:
                 proc = subprocess.run(command, capture_output=True, text=True,
                                       timeout=int(os.environ.get("MUSICBENCH_SONGEVAL_TIMEOUT", "3600")))

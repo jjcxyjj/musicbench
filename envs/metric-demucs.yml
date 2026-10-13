@@ -1,0 +1,8 @@
+name: demucs
+channels: [conda-forge]
+dependencies:
+  - python=3.10
+  - ffmpeg
+  - pip
+  - pip:
+      - demucs

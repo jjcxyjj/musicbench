@@ -1,0 +1,11 @@
+name: lyrics
+channels: [conda-forge]
+dependencies:
+  - python=3.10
+  - espeak-ng
+  - pip
+  - pip:
+      - torch
+      - faster-whisper
+      - pypinyin
+      - phonemizer

@@ -48,6 +48,8 @@ class FeatureJsonDataset(Dataset):
         json_name: str = "5_with_latent.json",
         audio_field: str = "path",
         caption_field: str = "Qwen_caption",
+        lyrics_field: str = "lyrics",
+        language_field: str = "language",
     ) -> None:
         self.root = root
         self.num_samples = int(num_samples)
@@ -57,6 +59,8 @@ class FeatureJsonDataset(Dataset):
         self.json_name = json_name
         self.audio_field = audio_field
         self.caption_field = caption_field
+        self.lyrics_field = lyrics_field
+        self.language_field = language_field
 
     # ------------------------------------------------------------------ load
     def load(self, split: str = "test") -> List[Sample]:
@@ -97,6 +101,9 @@ class FeatureJsonDataset(Dataset):
         # Keep the rest of the record as metadata for L1 metrics / future use.
         metadata = {
             "caption": caption,
+            "style_prompt": rec.get("style_prompt") or caption,
+            "lyrics": rec.get(self.lyrics_field) or "",
+            "language": rec.get(self.language_field),
             "has_vocal": rec.get("has_vocal"),
             "vocal_score": rec.get("vocal_score"),
             "style_name": rec.get("gf_style_name"),

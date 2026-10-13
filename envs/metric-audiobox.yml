@@ -1,0 +1,7 @@
+name: audiobox
+channels: [conda-forge]
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+      - audiobox_aesthetics

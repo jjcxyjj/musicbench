@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 from typing import Any, Dict, List
 
@@ -36,7 +37,7 @@ def load_manifest(path: str) -> List[Sample]:
     for r in rows:
         base = os.path.dirname(path)
         audio_path = r["audio_path"]
-        if not os.path.isabs(audio_path):
+        if audio_path and not os.path.isabs(audio_path):
             audio_path = os.path.join(base, audio_path)
         samples.append(
             Sample(
@@ -86,7 +87,17 @@ def score_one(task_name: str, metric_names: List[str], predictions: List, sample
     out: Dict[str, Any] = {}
     for name in metric_names:
         m = get_metric(name)()
-        out[name] = m.compute(predictions, samples)
+        values = m.compute(predictions, samples)
+        if isinstance(values, dict):
+            if 'n_evaluated' in values:
+                values.setdefault('coverage', values['n_evaluated'] / len(samples))
+            scalar_values = [v for k, v in _flatten(values).items()
+                             if isinstance(v, (int, float)) and not isinstance(v, bool)
+                             and k not in ('n_evaluated', 'n_expected', 'coverage')]
+            if not scalar_values or not all(math.isfinite(v) for v in scalar_values):
+                values['available'] = False
+                values.setdefault('reason', 'No finite complete metric values')
+        out[name] = values
     return out
 
 
@@ -101,7 +112,10 @@ def main() -> int:
     p.add_argument("--require-metrics", action="store_true", help="Fail on unavailable or incomplete metrics")
     p.add_argument("--tier", default="basic", choices=["basic", "professional"],
                    help="Metric tier: basic (no deep models) or professional (all)")
+    p.add_argument("--plugins", nargs="*", default=[])
     args = p.parse_args()
+    from musicbench.workflow import load_plugins
+    load_plugins(args.plugins)
 
     samples = load_manifest(args.manifest)
     task_cls = get_task(args.task)

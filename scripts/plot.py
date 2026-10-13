@@ -24,17 +24,24 @@ def main() -> int:
     with open(args.scores) as f:
         data = json.load(f)
 
+    if data.get("metric_definitions"):
+        from musicbench.evaluation.report import render
+        render(data, args.output)
+        print(f"[report] wrote category charts and analysis to {args.output}")
+        return 0
+
     algorithms: Dict[str, Dict[str, Any]] = data.get("algorithms", {})
     task = data.get("task", "unknown")
     ranking = data.get("ranking", [])
 
+    os.makedirs(args.output, exist_ok=True)
     # Flatten each algorithm's metrics into scalar key -> value.
     rows: Dict[str, Dict[str, float]] = {}
     metric_keys: List[str] = []
     for label, scores in algorithms.items():
         from musicbench.core.ranking import DEFAULT_WEIGHTS
         flat = {k: v for k, v in _flatten(scores).items()
-                if k in DEFAULT_WEIGHTS and isinstance(v, (int, float))
+                if k in data.get("ranking_weights", DEFAULT_WEIGHTS) and isinstance(v, (int, float))
                 and not isinstance(v, bool) and math.isfinite(v)}
         rows[label] = flat
         for k in flat:
@@ -59,15 +66,44 @@ def main() -> int:
             if k in rows[label]:
                 log_lines.append(f"  {k}: {rows[label][k]:.6f}")
         log_lines.append("")
-    with open(os.path.join(args.output, "report.log"), "w") as f:
-        f.write("\n".join(log_lines))
+
+    log_lines.extend(["## Interpretation", "",
+                      f"Samples: {data.get('sample_count', 'unknown')}; seed: {data.get('seed', 'unknown')}.",
+                      "All algorithms use the same sampled manifest. Scores do not establish statistical significance."])
+    from musicbench.core.ranking import DEFAULT_WEIGHTS
+    weights = data.get("ranking_weights", DEFAULT_WEIGHTS)
+    for key in metric_keys:
+        values = {label: row[key] for label, row in rows.items() if key in row}
+        higher = weights[key][1]
+        best = (max if higher else min)(values.values())
+        winners = [label for label, value in values.items() if value == best]
+        log_lines.append(f"- {key}: {'higher' if higher else 'lower'} is better; "
+                         f"best observed: {', '.join(winners)} ({best:.6f}); "
+                         f"available for {len(values)}/{len(rows)} algorithms.")
+    if ranking:
+        used = ranking[0]['used_metrics']
+        if not used:
+            log_lines.append("No shared complete metrics: no valid aggregate ranking is available.")
+        else:
+            best = ranking[0]['score']
+            leaders = [r['algorithm'] for r in ranking if r['score'] == best]
+            log_lines.append(f"Aggregate leaders/ties: {', '.join(leaders)}; based on {len(used)} shared complete metrics.")
+        skipped = ranking[0].get('skipped_metrics', [])
+        if skipped:
+            log_lines.append("Excluded from ranking: " + ", ".join(skipped))
+    log_lines.extend(["", "SongEval naturalness concerns vocal breathing/phrasing and is omitted for non-vocal or unknown-vocal samples.",
+                      "Reference similarity alone does not demonstrate generation quality; copying references can score well.",
+                      "", "![Metric comparison](comparison.png)"])
+    for filename in ('report.log', 'report.md'):
+        with open(os.path.join(args.output, filename), 'w') as handle:
+            handle.write("\n".join(log_lines) + "\n")
 
     # Render PNG bar chart (raw metrics + ranking side panel).
     try:
         _plot(args.output, rows, metric_keys, task, ranking)
     except Exception as exc:  # pragma: no cover - matplotlib may be absent
         print(f"[plot] PNG render skipped ({exc})")
-        return 0
+        return 1
 
     print(f"[plot] wrote report.log and comparison.png to {args.output}")
     return 0
@@ -81,33 +117,27 @@ def _plot(output_dir: str, rows: Dict[str, Dict[str, float]], metric_keys: List[
     import matplotlib.pyplot as plt
 
     labels = list(rows.keys())
-    x = list(range(len(metric_keys)))
-    width = 0.8 / max(1, len(labels))
-
-    has_ranking = bool(ranking)
-    if has_ranking:
-        fig, (ax, ax_rank) = plt.subplots(1, 2, figsize=(max(8, len(metric_keys) * 1.8), 4.8),
-                                         gridspec_kw={"width_ratios": [3, 1]})
-    else:
-        fig, ax = plt.subplots(1, 1, figsize=(max(8, len(metric_keys) * 1.8), 4.8))
-
-    for i, label in enumerate(labels):
-        vals = [rows[label].get(k, float("nan")) for k in metric_keys]
-        ax.bar([xi + (i - len(labels) / 2 + 0.5) * width for xi in x], vals, width, label=label)
-
-    ax.set_xticks(x)
-    ax.set_xticklabels(metric_keys, rotation=20, ha="right", fontsize=8)
-    ax.set_ylabel("score")
-    ax.set_title(f"musicbench — {task}")
-    ax.legend()
-
-    if has_ranking:
-        names = [r["algorithm"] for r in reversed(ranking)]
-        scores = [r["score"] for r in reversed(ranking)]
-        ax_rank.barh(names, scores)
-        ax_rank.set_xlim(0, 1)
-        ax_rank.set_title("ranking (weighted)")
-        ax_rank.set_xlabel("score")
+    panels = max(1, len(metric_keys)) + bool(ranking and ranking[0].get('used_metrics'))
+    cols = min(3, panels)
+    nrows = (panels + cols - 1) // cols
+    fig, axes = plt.subplots(nrows, cols, figsize=(5 * cols, 3.8 * nrows), squeeze=False)
+    axes = list(axes.flat)
+    for ax, key in zip(axes, metric_keys):
+        ax.bar(labels, [rows[label].get(key, float('nan')) for label in labels])
+        ax.set_title(key, fontsize=9)
+        ax.tick_params(axis='x', rotation=25)
+    used = len(metric_keys)
+    if not metric_keys:
+        axes[0].text(0.5, 0.5, 'No available comparable scalar metrics', ha='center')
+        used = 1
+    if ranking and ranking[0].get('used_metrics'):
+        axes[used].barh([r['algorithm'] for r in reversed(ranking)], [r['score'] for r in reversed(ranking)])
+        axes[used].set_xlim(0, 1)
+        axes[used].set_title('Relative weighted comparison')
+        used += 1
+    for ax in axes[used:]:
+        ax.set_visible(False)
+    fig.suptitle(f'musicbench — {task}')
 
     fig.tight_layout()
     fig.savefig(os.path.join(output_dir, "comparison.png"), dpi=150)

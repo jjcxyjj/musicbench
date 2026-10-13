@@ -33,7 +33,7 @@ class YourModel:
         #   self.model.eval()
         print(f"[my_t2m] loading checkpoint from {checkpoint_path}")
 
-    def generate(self, caption: str, sr: int = 48000) -> "object":
+    def generate(self, caption: str, sr: int = 48000, duration: float = 3.0, lyrics: str = "") -> "object":
         """根据 caption 生成音频，返回 (numpy array, sample_rate)。
 
         TODO: 换成你的真实生成调用，例如：
@@ -42,7 +42,7 @@ class YourModel:
         # 下面是占位实现（生成 3 秒 440Hz 正弦），务必替换掉。
         import numpy as np
 
-        t = np.arange(sr * 3) / sr
+        t = np.arange(int(sr * duration)) / sr
         return (0.3 * np.sin(2 * np.pi * 440.0 * t)).astype(np.float32), sr
 
 
@@ -66,6 +66,7 @@ def main() -> int:
     p.add_argument("--checkpoint", default=os.environ.get("MY_T2M_CHECKPOINT", ""),
                    help="模型权重路径（或读环境变量 MY_T2M_CHECKPOINT）")
     p.add_argument("--sr", type=int, default=48000)
+    p.add_argument("--duration", type=float, default=3.0)
     args = p.parse_args()
 
     # 1. 加载模型
@@ -81,14 +82,15 @@ def main() -> int:
     os.makedirs(out_dir, exist_ok=True)
 
     lines: List[str] = []
-    for row in manifest:
+    for index, row in enumerate(manifest):
         caption = (row.get("metadata") or {}).get("caption") or ""
-        if not caption:
-            print(f"[my_t2m] skip {row['id']}: no caption")
-            continue
-
-        audio, sr = model.generate(caption, sr=args.sr)
-        audio_path = os.path.abspath(os.path.join(out_dir, f"{row['id']}.wav"))
+        metadata = row.get("metadata") or {}
+        import numpy as np
+        np.random.seed(int(metadata.get("generation_seed", os.environ.get("MUSICBENCH_SEED", 42))))
+        # Real generators should also seed their framework and pass lyrics separately.
+        audio, sr = model.generate(metadata.get("style_prompt") or caption, sr=args.sr,
+                                   duration=args.duration, lyrics=metadata.get("lyrics", ""))
+        audio_path = os.path.abspath(os.path.join(out_dir, f"sample_{index:06d}.wav"))
         save_wav(audio_path, audio, sr)
 
         out: Dict[str, Any] = {"id": row["id"], "output": {"audio_path": audio_path}}
