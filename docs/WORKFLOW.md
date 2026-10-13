@@ -26,7 +26,7 @@ CLAP 与 MuQ-MuLan 采用官方接口处理整段音频；模型本身可能裁�
 
 ## 输入数据
 
-推荐 `manifest` JSON 数组。可以只提供文本，没有参考音频也可生成和评测。字段可放顶层或 metadata；metadata 优先。caption 向后兼容映射为 style_prompt，不映射为歌词。
+自定义数据可使用 `manifest` JSON 数组。可以只提供文本，没有参考音频也可生成和评测。字段可放顶层或 metadata；metadata 优先。caption 向后兼容映射为 style_prompt，不映射为歌词。
 
 ```json
 [
@@ -37,7 +37,39 @@ CLAP 与 MuQ-MuLan 采用官方接口处理整段音频；模型本身可能裁�
 
 如有音频，增加 audio_path，相对路径以原始 manifest 所在目录为基准。程序复制已提供音频并保存实际测试清单；缺失音频文件报错。任务要求真实标签时提供 ground_truth，例如节拍任务的 beats/tempo，标签任务的 tags。
 
-MusicLite `feature_json` 也支持：读取 root 下各子目录的 5_with_latent.json，可配置 caption_field、lyrics_field、language_field。旧 Qwen_caption 仍用作风格描述。manifest 请求数量大于记录数会报错；feature_json 沿用请求超出时返回全部记录的行为，报告使用实际数量。
+MusicLite 是文生音乐交互入口的默认数据源，默认扫描 `/data/MusicLite_data/feature/<日期>/5_with_latent.json`；若日期根目录没有 JSON，则检查 `<日期>/audio/5_with_latent.json`。两处都有时优先日期根目录，避免重复采样。支持 JSON 记录数组或单条记录对象。
+
+```yaml
+dataset:
+  name: feature_json
+  root: /data/MusicLite_data/feature
+  json_name: 5_with_latent.json
+  num_samples: 100
+  sampling_strategy: date_balanced
+  audio_field: path
+  caption_field: Qwen_caption
+  lyrics_field: lyrics
+  language_field: language
+seed: 42
+```
+
+默认 `date_balanced`：每轮随机打乱日期顺序，每个仍有记录的日期取一条未重复的随机记录，直到达到数量。样本数少于日期数时随机选择部分日期；某日期耗尽后由其他日期补齐。它尽量均衡日期覆盖，不是所有记录等概率。设置 `pooled` 则在所有日期的记录中等概率不放回抽样，数据量大的日期可能占更多。相同 JSON 内容、配置与种子得到相同抽样；新增日期或修改 JSON 后，即使种子相同也可能改变结果。请求数量超过总量时使用全部记录，并在终端与抽样记录中说明实际数量。
+
+打包只做一次：复制本次选中的音频到实验 `dataset/audio/`，写入 `dataset/manifest.json`。所有算法读取同一个绝对 manifest 路径，算法运行阶段不会重新抽样。`dataset/sampling.json` 保存种子、抽样策略、各日期记录数/抽中数、源 JSON SHA256 和选中 ID。每条 metadata 记录源日期、源 JSON、原始记录索引与音频路径，ID 由来源与原始索引生成，不因算法或抽样顺序变化。
+
+`path` 映射为音频，`Qwen_caption` 映射为 `style_prompt`，`has_vocal` 保留原标注；不会根据描述文字覆盖人声标注。音频相对路径先按 JSON 所在目录解析，再尝试日期目录及其 audio 子目录，绝对路径直接使用。未选中的音频不会复制；特征 JSON 每次读一个，候选记录按抽样策略限量保留。
+
+现有的 dynamics_path、melody_path、rhythm_path、latent_path、path_original 及未来新增的特征/标注均保留；完整原记录放在 `metadata.source_record`，新增顶层字段也带入 metadata，原 ground_truth 保留。条件特征文件暂不复制，保留原路径，适用于同一服务器运行；迁移到其他服务器需要一并搬运这些文件或调整适配器路径。
+
+后续增加 `lyrics` 和 `language`（zh/en）即可供歌词评测使用；若字段名不同，用 lyrics_field/language_field 映射。没有歌词时不从 caption 伪造歌词。混合数据中部分有歌词时，省略 `inputs.lyrics` 可按记录自动选择适用子集；`inputs.lyrics: true` 则要求所有抽中样本都有歌词，false 禁用歌词指标。新增标注会被保留，但新增指标仍须注册评测实现与任务规则。
+
+可单独检查抽样和打包，无需启动模型：
+
+```bash
+python -m scripts.package_dataset --dataset feature_json \
+  --root /data/MusicLite_data/feature --num-samples 20 --seed 42 \
+  --sampling-strategy date_balanced --output work/musiclite-preview
+```
 
 ```yaml
 inputs:
@@ -85,7 +117,7 @@ parameters: {}
 
 ## 评测环境
 
-主环境只安装 MusicBench 基础依赖。可按下表自行准备独立环境，也可以复用已有环境；库和权重安装由用户管理。
+主环境只安装 MusicBench 基础依赖。可使用 [配置脚本](METRIC_SETUP.md) 准备库与权重，也可按下表复用已有独立环境。
 
 | 评分器 | 主要依赖 | 模型配置 |
 | --- | --- | --- |

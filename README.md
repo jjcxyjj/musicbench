@@ -63,6 +63,12 @@ python scripts/setup_metrics.py --check-only
 
 已有环境只检查，不会被覆盖或自动升级；某项失败会保留日志和原配置。安装检查使用 CPU，服务器 GPU/CUDA 兼容性还需用少量样本确认。完整下载清单、复用环境、离线部署和排错见 [评测库配置流程](docs/METRIC_SETUP.md)。
 
+## MusicLite 测试数据
+
+文生音乐默认从 `/data/MusicLite_data/feature` 下各日期的 `5_with_latent.json` 抽样，兼容 JSON 放在日期目录或 audio 子目录。默认按日期随机轮转、每个日期内随机不放回选择，也可选 `pooled` 全库记录等概率抽样。
+
+音频只打包一次，所有算法共用相同测试清单；来源日期、JSON 校验值和抽样统计写入 `dataset/sampling.json`。原始特征、标注和未来新增字段完整保留；新增 lyrics/language 后可以启用歌词指标。详细规则和 YAML 示例见 [输入数据说明](docs/WORKFLOW.md#输入数据)。
+
 ## 环境与算法
 
 主环境负责配置、数据和报告，各算法/评分器使用 `conda run` 指定环境，不需要手动反复 activate。无需把所有模型依赖装在一起。现有 SongEval 仓库与环境可直接通过 YAML 指定，详见 [SongEval 接入](docs/SONGEVAL.md)。

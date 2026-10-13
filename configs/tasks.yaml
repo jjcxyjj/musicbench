@@ -2,7 +2,7 @@
 plugins: []
 tasks:
   text2music:
-    dataset: {name: manifest, path: dataset/manifest.json}
+    dataset: {name: feature_json, root: /data/MusicLite_data/feature}
     metrics:
       audiobox: {category: aesthetics, requires: []}
       songeval: {category: aesthetics, requires: []}

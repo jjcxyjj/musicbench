@@ -131,9 +131,15 @@ def interactive(catalog_path, task=None, metric_profile=None):
     profile = profiles[task]
     rules = copy.deepcopy(profile['metrics'])
     dataset = dict(profile.get('dataset', {'name': 'manifest'}))
-    dataset['name'] = choose('输入数据格式', ['manifest', 'feature_json']) if task == 'text2music' else dataset['name']
+    selected_format = choose('输入数据格式', ['feature_json', 'manifest']) if task == 'text2music' else dataset['name']
+    if selected_format != dataset['name']:
+        dataset = {'name': selected_format}
     key = 'root' if dataset['name'] == 'feature_json' else 'path'
-    dataset[key] = ask('数据根目录' if key == 'root' else '输入清单 JSON 路径', dataset.get(key, 'dataset/manifest.json'))
+    dataset[key] = ask('数据根目录' if key == 'root' else '输入清单 JSON 路径', dataset.get(key, '/data/MusicLite_data/feature' if key == 'root' else 'dataset/manifest.json'))
+    if dataset['name'] == 'feature_json':
+        dataset['json_name'] = ask('每个日期目录的特征 JSON 文件名', dataset.get('json_name', '5_with_latent.json'))
+        dataset['audio_field'] = ask('音频路径字段名', dataset.get('audio_field', 'path'))
+        dataset['sampling_strategy'] = choose('抽样方式（日期均衡 / 全库记录等概率）', ['date_balanced', 'pooled'])
     inputs = {}
     reference = None
     if task == 'text2music':

@@ -58,7 +58,11 @@ def package(dataset_name: str, split: str, output_dir: str, **dataset_kwargs: An
             }
         )
 
-    with open(os.path.join(output_dir, "manifest.json"), "w") as f:
+    if hasattr(ds, "selection_summary"):
+        with open(os.path.join(output_dir, "sampling.json"), "w", encoding="utf-8") as f:
+            json.dump(ds.selection_summary, f, indent=2, ensure_ascii=False)
+
+    with open(os.path.join(output_dir, "manifest.json"), "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2, ensure_ascii=False)
     return manifest
 
@@ -76,12 +80,20 @@ def main() -> int:
     # feature_json dataset params
     p.add_argument("--root", default="/data/MusicLite_data/feature")
     p.add_argument("--json-name", default="5_with_latent.json")
+    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--sampling-strategy", choices=["date_balanced", "pooled"], default="date_balanced")
+    p.add_argument("--audio-field", default="path")
+    p.add_argument("--caption-field", default="Qwen_caption")
+    p.add_argument("--lyrics-field", default="lyrics")
+    p.add_argument("--language-field", default="language")
     args = p.parse_args()
 
     if args.dataset == "feature_json":
         manifest = package(
             args.dataset, args.split, args.output,
             root=args.root, num_samples=args.num_samples, json_name=args.json_name,
+            seed=args.seed, sampling_strategy=args.sampling_strategy, audio_field=args.audio_field,
+            caption_field=args.caption_field, lyrics_field=args.lyrics_field, language_field=args.language_field,
         )
     else:
         manifest = package(
