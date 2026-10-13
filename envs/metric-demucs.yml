@@ -5,4 +5,7 @@ dependencies:
   - ffmpeg
   - pip
   - pip:
+      - torch>=2.2,<2.9
+      - torchaudio>=2.2,<2.9
+      - soundfile
       - demucs

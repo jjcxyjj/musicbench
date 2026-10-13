@@ -6,6 +6,8 @@
 conda env create -f envs/benchmark.yml
 conda activate musicbench
 pip install -e .
+# 首次运行：准备评分器依赖和模型权重（较大的下载）
+python scripts/setup_metrics.py
 ./run.sh
 ```
 
@@ -40,6 +42,26 @@ pip install -e .
 ```
 
 每次实验保存配置、实际测试清单、参考集合路径、生成音乐、原始分数、识别歌词和错漏明细、评分器版本、子进程日志与完成状态。缺少输入记为不适用；应该执行却缺模型/依赖记为失败。默认保留失败报告并以非零状态退出。
+
+## 一键配置评测库和权重
+
+`python scripts/setup_metrics.py` 按指标分别创建 conda 环境、下载模型权重并检查模型能否加载。CLAP 与 FAD 共用环境和权重，歌词识别默认先做 Demucs 人声分离。所有安装/检查串行执行。
+
+已有 SongEval 时，在主环境中执行（替换为你的实际环境名和路径）：
+
+```bash
+python scripts/setup_metrics.py --dry-run
+python scripts/setup_metrics.py \
+  --reuse songeval=your_songeval_env \
+  --songeval-repo /data/SongEval \
+  --cache-dir /data/musicbench-models
+python scripts/setup_metrics.py --check-only
+./run.sh text2music
+```
+
+成功后生成 `configs/metrics.local.yaml`，实验自动读取其中的环境、权重及缓存配置，交互时可继续修改。实验 YAML 的显式配置优先。只装部分指标可使用 `--metrics audiobox songeval clap_score fad`；未安装的指标若被任务启用仍会报失败，应在正式测试前补齐。只安装库使用 `--libraries-only`，离线检查现有库与权重使用 `--check-only`。
+
+已有环境只检查，不会被覆盖或自动升级；某项失败会保留日志和原配置。安装检查使用 CPU，服务器 GPU/CUDA 兼容性还需用少量样本确认。完整下载清单、复用环境、离线部署和排错见 [评测库配置流程](docs/METRIC_SETUP.md)。
 
 ## 环境与算法
 

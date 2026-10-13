@@ -7,3 +7,6 @@ third_party/
 
 work/
 configs/experiment.local.yaml
+
+models/
+configs/metrics.local.yaml

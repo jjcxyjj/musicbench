@@ -29,6 +29,33 @@ def read_yaml(path):
     return data
 
 
+def load_metric_profile(path):
+    """Resolve portable profile paths against the profile, before experiment merging."""
+    path = Path(path).expanduser().resolve()
+    data = read_yaml(path)
+    profile = {key: copy.deepcopy(data.get(key, {})) for key in
+               ('runtime_environment', 'metric_environments', 'metric_options')}
+    for key, value in profile['runtime_environment'].items():
+        if not isinstance(value, str):
+            raise ValueError(f'Runtime environment variable {key} must be a string')
+        if key in ('HF_HOME', 'TORCH_HOME'):
+            profile['runtime_environment'][key] = resolve(value, path.parent)
+    for options in profile['metric_options'].values():
+        for key in ('repo', 'checkpoint'):
+            if options.get(key):
+                options[key] = resolve(options[key], path.parent)
+        if str(options.get('model', '')).startswith(('.', '/', '~')):
+            options['model'] = resolve(options['model'], path.parent)
+    if data.get('setup_verification', {}).get('mode') == 'imports':
+        print('[notice] Metric libraries configured; model weights have not been checked yet.')
+    return profile
+
+
+def apply_metric_profile(profile, experiment):
+    from musicbench.setup_metrics import merge_defaults
+    return merge_defaults(profile, experiment)
+
+
 def save_yaml(path, data):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -93,7 +120,8 @@ def load_plugins(modules):
         importlib.import_module(module)
 
 
-def interactive(catalog_path, task=None):
+def interactive(catalog_path, task=None, metric_profile=None):
+    metric_profile = metric_profile or {}
     catalog = read_yaml(catalog_path)
     load_plugins(catalog.get('plugins', []))
     profiles = catalog['tasks']
@@ -146,35 +174,38 @@ def interactive(catalog_path, task=None):
               'repetitions': ask_int('每条输入生成次数（全部评测，不挑最好结果）', 1),
               'plugins': catalog.get('plugins', []), 'dataset': dataset, 'inputs': inputs,
               'algorithms': algorithms, 'metric_rules': rules, 'require_metrics': True,
-              'metric_options': {}, 'metric_environments': {}, 'ranking': {}}
+              'metric_options': copy.deepcopy(metric_profile.get('metric_options', {})),
+              'metric_environments': copy.deepcopy(metric_profile.get('metric_environments', {})),
+              'runtime_environment': copy.deepcopy(metric_profile.get('runtime_environment', {})), 'ranking': {}}
     if reference:
         config['reference_audio'] = reference
     for name, rule in rules.items():
         if any(inputs.get(condition) is False for condition in rule.get('requires', [])):
             continue
-        options = {}
+        options = copy.deepcopy(config['metric_options'].get(name, {}))
         if name == 'songeval':
-            options['repo'] = ask('已跑通的 SongEval 仓库路径', ROOT / 'third_party/SongEval')
-            options['env'] = ask('SongEval conda 环境', 'songeval')
+            options['repo'] = ask('已跑通的 SongEval 仓库路径', options.get('repo', ROOT / 'third_party/SongEval'))
+            options['env'] = ask('SongEval conda 环境', options.get('env', 'songeval'))
         else:
-            config['metric_environments'][name] = ask(f'{name} conda 环境', ({'clap_score': 'clap', 'fad': 'clap'}.get(name, name)) if task == 'text2music' else 'current')
-        options['cuda_visible_devices'] = ask(f'{name} 评测显卡编号（inherit/cpu）', 'inherit')
-        options['device'] = ask(f'{name} 设备 auto/cpu/cuda', 'auto')
+            config['metric_environments'][name] = ask(f'{name} conda 环境', config['metric_environments'].get(name, ({'clap_score': 'clap', 'fad': 'clap'}.get(name, name)) if task == 'text2music' else 'current'))
+        options['cuda_visible_devices'] = ask(f'{name} 评测显卡编号（inherit/cpu）', options.get('cuda_visible_devices', 'inherit'))
+        options['device'] = ask(f'{name} 设备 auto/cpu/cuda', options.get('device', 'auto'))
         if name in ('clap_score', 'fad', 'mulan', 'lyrics'):
             defaults = {'clap_score': 'laion/clap-htsat-fused', 'fad': 'laion/clap-htsat-fused',
                         'mulan': 'OpenMuQ/MuQ-MuLan-large', 'lyrics': 'large-v3'}
-            options['model'] = ask(f'{name} 模型标识或本地目录', defaults[name])
+            options['model'] = ask(f'{name} 模型标识或本地目录', options.get('model', defaults[name]))
         if name == 'audiobox':
-            options['checkpoint'] = ask('Audiobox 权重路径（空白使用官方默认）', '')
+            options['checkpoint'] = ask('Audiobox 权重路径（空白使用官方默认）', options.get('checkpoint', ''))
         if name == 'lyrics':
-            options['language'] = choose('清单未指定语言时的默认歌词语言', ['zh', 'en'])
-            options['audio_source'] = choose('歌词音频处理协议（所有算法一致）', ['demucs', 'mix'])
-            options['beam_size'] = ask_int('歌词识别 beam size', 5)
+            options['language'] = choose('清单未指定语言时的默认歌词语言', sorted(['zh', 'en'], key=lambda v: v != options.get('language', 'zh')))
+            options['audio_source'] = choose('歌词音频处理协议（所有算法一致）', sorted(['demucs', 'mix'], key=lambda v: v != options.get('audio_source', 'demucs')))
+            options['beam_size'] = ask_int('歌词识别 beam size', options.get('beam_size', 5))
             if options['audio_source'] == 'demucs':
-                options['separation'] = {'env': ask('人声分离 conda 环境', 'demucs'),
-                                         'device': ask('人声分离设备 auto/cpu/cuda', 'auto'),
-                                         'cuda_visible_devices': ask('人声分离显卡编号', options['cuda_visible_devices']),
-                                         'model': ask('Demucs 模型', 'htdemucs')}
+                separation = options.get('separation', {})
+                options['separation'] = {**separation, 'env': ask('人声分离 conda 环境', separation.get('env', 'demucs')),
+                                         'device': ask('人声分离设备 auto/cpu/cuda', separation.get('device', 'auto')),
+                                         'cuda_visible_devices': ask('人声分离显卡编号', separation.get('cuda_visible_devices', options['cuda_visible_devices'])),
+                                         'model': ask('Demucs 模型', separation.get('model', 'htdemucs'))}
         config['metric_options'][name] = options
     return config
 
@@ -213,6 +244,11 @@ def validate(config, base):
     from musicbench.core.registry import get_task, get_metric, get_dataset
     config = copy.deepcopy(config)
     load_plugins(config.get('plugins', []))
+    mappings = [config.get('runtime_environment', {})] + [
+        options.get('environment', {}) for options in config.get('metric_options', {}).values()]
+    for mapping in mappings:
+        if not isinstance(mapping, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in mapping.items()):
+            raise ValueError('Environment variables must be string mappings')
     task = get_task(config['task'])
     if int(config.get('repetitions', 1)) <= 0:
         raise ValueError('repetitions must be positive')
@@ -395,6 +431,7 @@ def execute(config, output):
     logs = output / 'logs'
     logs.mkdir()
     child_env = os.environ.copy()
+    child_env.update(config.get('runtime_environment', {}))
     child_env.update(PYTHONPATH=str(ROOT) + os.pathsep + child_env.get('PYTHONPATH', ''),
                      MUSICBENCH_SEED=str(config['seed']), PYTHONDONTWRITEBYTECODE='1',
                      MPLCONFIGDIR=str(output / '.matplotlib'))
@@ -405,6 +442,7 @@ def execute(config, output):
         options = options or {}
         command = environment_command(env, args, conda)
         process_env = child_env.copy()
+        process_env.update(options.get('environment', {}))
         process_env['PYTHONPATH'] = str(cwd) + os.pathsep + process_env.get('PYTHONPATH', '')
         gpu = str(options.get('cuda_visible_devices', 'inherit'))
         if options.get('device') == 'cpu':
@@ -573,16 +611,20 @@ def main(argv=None):
     parser.add_argument('task', nargs='?')
     parser.add_argument('--catalog', default=str(ROOT / 'configs/tasks.yaml'))
     parser.add_argument('--config')
+    parser.add_argument('--metric-config', help='Evaluator profile; defaults to configs/metrics.local.yaml if present')
     parser.add_argument('--save-config')
     parser.add_argument('--output')
     parser.add_argument('--dry-run', action='store_true')
     args = parser.parse_args(argv)
     try:
+        profile_path = Path(args.metric_config).expanduser() if args.metric_config else ROOT / 'configs/metrics.local.yaml'
+        profile = load_metric_profile(profile_path) if args.metric_config or profile_path.is_file() else {}
         if args.config:
             path = Path(args.config).resolve()
             config, base = read_yaml(path), path.parent
         else:
-            config, base = interactive(args.catalog, args.task), ROOT
+            config, base = interactive(args.catalog, args.task, profile), ROOT
+        config = apply_metric_profile(profile, config)
         config = validate(config, base)
         if not args.config or args.save_config:
             saved = Path(args.save_config or ROOT / 'configs/experiment.local.yaml').resolve()
