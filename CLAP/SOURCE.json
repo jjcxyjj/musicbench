@@ -1,0 +1,13 @@
+{
+  "repository": "https://github.com/LAION-AI/CLAP.git",
+  "revision": "1fd4c37df5ffbfcfbad5415c170bc66cf94c9994",
+  "source_files": 86,
+  "policy": "Shallow partial clone; selected code/config/docs snapshot; no .git, weights or binary media.",
+  "omitted_paths": [
+    "assets/audioclip-arch.png",
+    "assets/clap-zeroshot.PNG",
+    "assets/logo.PNG",
+    "src/laion_clap/clap_module/bpe_simple_vocab_16e6.txt.gz",
+    "src/laion_clap/training/audioset_textmap.npy"
+  ]
+}

@@ -12,7 +12,13 @@ models/
 configs/metrics.local.yaml
 
 results/
-*/upstream/
 */weights/
 legacy/work/
 legacy/configs/*.local.yaml
+
+# Upstream source snapshots are versioned; nested Git metadata and models are not.
+**/upstream/**/.git/
+**/upstream/**/*.safetensors
+**/upstream/**/*.ckpt
+**/upstream/**/*.pt
+**/upstream/**/*.pth

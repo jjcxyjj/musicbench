@@ -1,0 +1,11 @@
+{
+  "repository": "https://github.com/ASLP-lab/SongEval.git",
+  "revision": "848fb2ff3a2a9d64dcb20d46f07238c28abd7add",
+  "source_files": 6,
+  "policy": "Shallow partial clone; selected code/config/docs snapshot; no .git, weights or binary media.",
+  "omitted_paths": [
+    "assets/logo.png",
+    "ckpt/model.safetensors",
+    "example/example.mp3"
+  ]
+}

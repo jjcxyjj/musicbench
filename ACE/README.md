@@ -23,11 +23,15 @@ ACE/
 
 权重目录包含原模型的 config.json、分片 safetensors 与索引、tokenizer、processor/preprocessor 等文件。这里给出 Hugging Face 页面用于辨认官方模型，不要求服务器访问它；你从自己准备的本地位置复制完整模型即可。也可把 config.yaml 改成已有绝对路径。
 
-联网准备机获取参考代码（不是下载模型）：
+参考源码（尚未克隆）：
+
+参考源码尚未拉取；在项目根目录执行：
 
 ```bash
-git clone https://github.com/QwenLM/Qwen2.5-Omni.git ACE/upstream
+GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 https://github.com/QwenLM/Qwen2.5-Omni.git ACE/upstream
 ```
+
+只克隆 GitHub 源码，不下载模型参数。
 
 运行依赖：torch、支持 Qwen2_5OmniForConditionalGeneration/Qwen2_5OmniProcessor 的 transformers、accelerate、qwen-omni-utils 及音频解码依赖。按照 Qwen 仓库说明在兼容的联网 Linux 机器准备 wheelhouse，再复制到服务器当前 songeval 环境安装；不要盲目升级已跑通的依赖。缺少上述类时说明 transformers 版本不支持接口。首次运行不依赖 flash-attn，采用 SDPA。
 

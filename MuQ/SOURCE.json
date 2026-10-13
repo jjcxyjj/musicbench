@@ -1,0 +1,14 @@
+{
+  "repository": "https://github.com/tencent-ailab/MuQ.git",
+  "revision": "28847ea50cd31ac4b8b6a7dacc051ad7d1c7606a",
+  "source_files": 76,
+  "policy": "Shallow partial clone; selected code/config/docs snapshot; no .git, weights or binary media.",
+  "omitted_paths": [
+    "images/muq-logo.jpeg",
+    "images/radar.jpg",
+    "images/tab-marble.jpg",
+    "images/tab-mulan.png",
+    "images/tagging.jpg",
+    "src/recipes/pretrain/fairseq"
+  ]
+}

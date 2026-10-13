@@ -7,9 +7,13 @@ PER 是计算规则，不是一个单独的预训练模型。当前独立能力�
 - 英文 G2P：https://github.com/bootphon/phonemizer
 - 英文系统依赖：https://github.com/espeak-ng/espeak-ng
 
+参考源码尚未拉取；在项目根目录执行：
+
 ```bash
-git clone https://github.com/SYSTRAN/faster-whisper.git PER/upstream
+GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 https://github.com/SYSTRAN/faster-whisper.git PER/upstream
 ```
+
+只克隆 GitHub 源码，不下载模型参数。
 
 手工准备 faster-whisper / CTranslate2 格式完整本地模型（含 model.bin、config.json、tokenizer 等），放 PER/weights/large-v3 或填 per.model。依赖 faster-whisper、pypinyin；英文还需 phonemizer 与 espeak-ng 动态库，可设置 per.espeak_library。服务器通过已准备的 wheelhouse 离线安装，不访问模型站。
 

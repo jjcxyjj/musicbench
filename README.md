@@ -9,7 +9,7 @@ main.py                     # 读 JSON → 问可用输入 → 逐项评分
 shared.py                   # 本地模型加载和分数汇总的小工具
 config.yaml                 # 启用哪些能力、各自的本地模型路径
 songeval/score.py            # 音频 → 五维美学评分
-songeval/upstream/           # 你已有的 SongEval 仓库，也可在配置里填外部路径
+songeval/upstream/           # 已附 SongEval 源码，也可填已有外部路径
 audiobox-aesthetics/score.py # 音频 → CE/CU/PC/PQ
 MuQ/score.py           # 音频 + 风格文本 → 相似度
 CLAP/score.py                # 音频 + 风格文本 → CLAP 相似度
@@ -21,7 +21,7 @@ examples/input.example.json # 输入示例
 legacy/                     # 之前的复杂编排代码，仅归档，新入口不调用
 ```
 
-各能力只有一个 `evaluate(rows, options, references)` 函数。代码库可放到对应目录的 upstream，权重放在 weights，也可在 config.yaml 填你已经跑通的外部绝对路径。不用把上游代码复制进评分文件。
+各能力只有一个 `evaluate(rows, options, references)` 函数。SongEval、CLAP、Audiobox、MuQ 的 upstream 已附上游源码快照；FAD、PER、ACE 的运行入口已有，参考源码尚未附上，权重由你放在 weights，也可在 config.yaml 填你已经跑通的外部绝对路径。不用把上游代码复制进评分文件。
 
 ## 第一步：先用已有的 SongEval 和 Audiobox
 
@@ -102,19 +102,25 @@ FAD 至少需要各两条生成/参考音频；样本过少仍不稳定。默认
 | PER | https://github.com/SYSTRAN/faster-whisper | CTranslate2 格式 Whisper；中文 pypinyin / 英文 phonemizer |
 | ACE 两个标注模型 | https://github.com/QwenLM/Qwen2.5-Omni | 各自完整的 captioner / transcriber 模型 |
 
-联网准备机可执行以下命令，之后复制到服务器；服务器不运行下载命令：
+### 源码准备状态与剩余克隆命令
+
+已完成 songeval、CLAP、audiobox-aesthetics、MuQ 四个目录的源码克隆，分别含 upstream/ 与 SOURCE.json（上游地址、固定提交版本、排除文件清单）。这些源码快照移除了内层 .git，随 chatgpt 分支提供；这四个不必再克隆。FAD、PER、ACE 的参考源码尚未克隆，评分及独立运行入口已经提供。
+
+下载源码时使用浅层部分克隆，关闭 Git LFS 自动下载，只取代码、配置和文档；没有模型参数、音视频样例或二进制媒体。上游文档中引用的演示图片可能不显示，这不影响评分代码。没有改写上游源码，许可证保留。上游训练用子模块不递归克隆（如 MuQ 的 fairseq），不影响当前本地推理入口；如以后训练，需另行准备这些训练依赖。
+
+剩余三个在项目根目录运行下面的命令即可。地址都是 GitHub 源码仓库，不是 Hugging Face 参数仓库；GIT_LFS_SKIP_SMUDGE=1 禁止 LFS 自动拉取大文件。无需运行任何模型下载命令。
 
 ```bash
-git clone https://github.com/ASLP-lab/SongEval.git songeval/upstream
-git clone https://github.com/facebookresearch/audiobox-aesthetics.git audiobox-aesthetics/upstream
-git clone https://github.com/tencent-ailab/MuQ.git MuQ/upstream
-git clone https://github.com/microsoft/fadtk.git FAD/upstream
-git clone https://github.com/LAION-AI/CLAP.git CLAP/upstream
-git clone https://github.com/SYSTRAN/faster-whisper.git PER/upstream
-git clone https://github.com/QwenLM/Qwen2.5-Omni.git ACE/upstream
+GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 https://github.com/microsoft/fadtk.git FAD/upstream
+GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 https://github.com/SYSTRAN/faster-whisper.git PER/upstream
+GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 https://github.com/QwenLM/Qwen2.5-Omni.git ACE/upstream
 ```
 
-已有仓库不用克隆，把 config.yaml 的 repo 改成原路径即可。git clone 不保证包含权重；模型目录、分词器和权重文件需你手工准备。MuQ-MuLan 的音频/文本编码器分别填写 audio_model/text_model，本地目录名保留 muq / xlm-roberta 字样。
+ACE/upstream 应来自 **QwenLM/Qwen2.5-Omni**，作为 captioner / transcriber 的推理参考，不是 ACE 音乐生成项目。PER/upstream 对应 faster-whisper；FAD/upstream 为 fadtk 参考源码，当前 FAD 自行计算距离，不要求克隆或安装 fadtk 才能运行。
+
+上游源码存在不等于 Python 依赖已经安装，也不包含权重。你仍在 songeval 环境中手工配置依赖、准备本地模型并填写 config.yaml。已跑通的库无需重装；MuQ-MuLan 的音频/文本编码器分别填写 audio_model/text_model，本地目录名保留 muq / xlm-roberta 字样。
+
+可安装的本地仓库通常使用 `python -m pip install --no-index --no-deps --no-build-isolation ./目录/upstream`；先离线补齐其构建和运行依赖。README/requirements/pyproject 中的依赖并不会因为克隆而自动安装。Qwen 主仓库主要提供推理示例，其 qwen-omni-utils、transformers 等仍需从你准备的 wheelhouse 安装。
 
 Audiobox 非 Hugging Face 官方权重地址：`https://dl.fbaipublicfiles.com/audiobox-aesthetics/checkpoint.pt`。在联网机器下载，再放入 audiobox-aesthetics/weights/checkpoint.pt。
 

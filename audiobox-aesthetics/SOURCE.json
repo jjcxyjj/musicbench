@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/facebookresearch/audiobox-aesthetics.git",
+  "revision": "2618e9d451b456e9328b39495b5e6234678aa550",
+  "source_files": 23,
+  "policy": "Shallow partial clone; selected code/config/docs snapshot; no .git, weights or binary media.",
+  "omitted_paths": [
+    "assets/aes_model.png"
+  ]
+}
